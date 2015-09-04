@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Root Cause by struct</title>
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/github-light.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1><a href='http://struct.github.io'>Root Cause</a></h1>
+        <p></p>
+        <p class="view">
+        <a href="https://twitter.com/chrisrohlf">Twitter</a><br>
+        <a href="https://github.com/struct">GitHub</a><br>
+        <a href="https://www.linkedin.com/profile/view?id=9681373">LinkedIn</a><br>
+        <a href="https://keybase.io/chrisrohlf">Keybase</a><br>
+        <a href="https://github.com/struct/research">Research</a><br>
+        <a href="resume.html">About</a><br>
+        <a href="mailto:chris.rohlf@gmail.com">Email</a>
+        </p>
+      </header>
+      <section>
+        <h2><div id='post0'>A post</div></h2>
+        <p>This is a test of code highlighting:
+        <pre><code>
+          {% highlight c++}
+          // SizeSpecificPartitionAllocator example usage
+          SizeSpecificPartitionAllocator<1024> mySzSpecificAllocator;
+          mySzSpecificAllocator.init();
+          void *p = PartitionAlloc(mySzSpecificAllocator.root(), sz);
+          PartitionFree(p);
+          mySzSpecificAllocator.shutdown();
+          
+          // PartitionAllocatorGeneric example usage
+          PartitionAllocGeneric myGenericAllocator;
+          myGenericAllocator.init();
+          void *p = partitionAllocGeneric(myGenericAllocator.root(), sz);
+          partitionFreeGeneric(myGenericAllocator.root(), p);
+          myGenericAllocator.shutdown();
+          {% highlight c++}
+        </code></pre>
+        </p>
+      </section>
+      <footer>
+        <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
+      </footer>
+    </div>
+    <script src="javascripts/scale.fix.js"></script>
+              <script type="text/javascript">
+            var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+            document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+          </script>
+          <script type="text/javascript">
+            try {
+              var pageTracker = _gat._getTracker("UA-65842316-1");
+            pageTracker._trackPageview();
+            } catch(err) {}
+          </script>
+  </body>
+</html>
