@@ -77,7 +77,7 @@ myGenericAllocator.shutdown();
     CJS_Object::operator delete
         </pre>
 
-        Many CPDF_* objects inherit from CPDF_Object, so they benefit from its overloaded new and delete operators. Here is an example of the patch for FX_AllocOrDie to allocate from a partition instead of calling calloc (original comments removed for brevity):
+        Many CPDF_* objects inherit from CPDF_Object, so they benefit from its overloaded new and delete operators. Here is an example of the patch for FX_AllocOrDie to allocate from a partition instead of calling calloc. The memset was added because some of the PDFium code expects the memory returned to be initialized.
 
         <br><br>
 
