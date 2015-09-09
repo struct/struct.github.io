@@ -13,7 +13,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 p, ul, ol, table, pre, dl {
-  margin:0 0 20px;
+  margin:0 0 0px;
 }
 
 h1, h2, h3 {
@@ -22,6 +22,11 @@ h1, h2, h3 {
 
 h1 {
   font-size:28px;
+}
+
+h1 a {
+  color: #222;
+  text-decoration: none;
 }
 
 h2 {
@@ -34,12 +39,12 @@ h3, h4, h5, h6 {
 
 a {
   color:#39c;
-  font-weight:400;
+  font-weight:500;
   text-decoration:none;
 }
 
 a small {
-  font-size:11px;
+  font-size:12px;
   color:#777;
   margin-top:-0.6em;
   display:block;
@@ -60,14 +65,11 @@ blockquote {
 code, pre {
   font-family:Monaco, Bitstream Vera Sans Mono, Lucida Console, Terminal;
   color:#333;
-  font-size:12px;
+  font-size:11px;
 }
 
 pre {
-  padding:8px 15px;
-  background: #f8f8f8;
-  border-radius:5px;
-  border:1px solid #e5e5e5;
+  padding:2px 2px;
   overflow-x: auto;
 }
 
@@ -96,7 +98,7 @@ img {
 }
 
 header {
-  width:270px;
+  width:180px;
   float:left;
   position:fixed;
 }
@@ -130,7 +132,7 @@ header li {
 
 header ul a {
   line-height:1;
-  font-size:11px;
+  font-size:12px;
   color:#999;
   display:block;
   text-align:center;
@@ -160,13 +162,13 @@ header ul a strong {
 }
 
 section {
-  width:500px;
+  width:650px;
   float:right;
   padding-bottom:50px;
 }
 
 small {
-  font-size:11px;
+  font-size:12px;
 }
 
 hr {
@@ -179,7 +181,7 @@ hr {
 footer {
   width:270px;
   float:left;
-  position:fixed;
+  position: float;
   bottom:50px;
 }
 
@@ -197,13 +199,13 @@ footer {
   }
 
   header {
-    padding-right:320px;
+    padding-right:250px;
   }
 
   section {
     border:1px solid #e5e5e5;
     border-width:1px 0;
-    padding:20px 0;
+    padding:40px 0;
     margin:0 0 20px;
   }
 

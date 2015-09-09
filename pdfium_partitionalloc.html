@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Root Cause</title>
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/github-light.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1><a href='http://struct.github.io'>Root Cause</a></h1>
+        <p></p>
+        <p class="view">
+        <a href="https://twitter.com/chrisrohlf">Twitter</a><br>
+        <a href="https://github.com/struct">GitHub</a><br>
+        <a href="https://www.linkedin.com/profile/view?id=9681373">LinkedIn</a><br>
+        <a href="https://keybase.io/chrisrohlf">Keybase</a><br>
+        <a href="https://github.com/struct/research">Research</a><br>
+        <a href="resume.html">About</a><br>
+        <a href="mailto:chris.rohlf@gmail.com">Email</a>
+        </p>
+      </header>
+      <section>
+        <h2><div id='post0'>Porting PartitionAlloc To PDFium</div></h2>
+        <p>
+        September 9th, 2015<br>
+        Chris Rohlf<br><br>
+
+        I recently started poking around at the Chrome source code tree again. Much has changed while I spent a year away from browsers to concentrate on infrastructure. While I have racked up some decent bugs in those targets, they remain much harder to exploit than client-side code. In that time, I've been paying close attention to the application-specific exploit mitigations being released in Chrome and Internet Explorer and they’ve been a positive step forward for 'real security'. So this time, in addition to the typical bug hunting, I was hoping to write some code that might help to do more than just squash a few bugs. For my first target I settled on the open source PDFium project. PDFium was originally written by FoxitSoftware and was open sourced by Chrome last year. Chrome uses PDFium to parse and display PDF files within the renderer sandbox.
+        <br><br>
+        PDF is a moderately complex file format, so it's understandable that a developer would make a mistake when writing a PDF parser in C++. This is the type of code where you want to invest in exploit mitigations and attack surface reduction. Google has been very active in cleaning up this code base and bringing it up to Chrome standards. After spending some time with its code, I realized that almost all of its memory allocation is done via simple wrappers around calls to the system heap. This seemed like a good opportunity to introduce a more secure memory allocator without having to modify much of the code. The obvious choice was PartitionAlloc, which already ships with Chrome.
+        <br><br>
+        If you're not already familiar with PartitionAlloc, I'll give you a brief overview, but first let’s lay out some of the problems with traditional memory allocators like ptmalloc or jemalloc that PartitionAlloc attempts to solve. When you call malloc and allocate some memory for an object, the allocator doesn't understand what kind of data will be stored there, and it doesn't give you the ability to say where you want to store it. A C++ class object may be next to a string that holds a cryptographic key, which may be adjacent to a structure of function pointers. In between all of this data is metadata that the allocator uses to manage the heap (typically stored pointers for a doubly-linked list and flags). This makes the life of an exploit writer a lot easier because it gives him more options when looking for data targets to overwrite. For example, when exploiting a use-after-free vulnerability we want to place an object of type B where an object of type A was previously allocated. We can then trigger a dereference of the stale pointer of type A that in turn uses the bits from the object of type B. This is often possible because both objects are allocated in the same heap.
+        <br><br>
+        So what does this have to do with our choice of memory allocator? If our malloc implementation were a bit smarter and allowed us to store objects in specifics buckets then exploiting use-after-free vulnerabilities wouldn't be as easy as it is today. Especially if C++ objects of type A were never allocated in the same heap as an object of type B. And that is precisely what Google did when they set out to mitigate use-after-free vulnerabilities in Chrome. PartitionAlloc sits inside of the aptly named WebKit Template Framework, or WTF for short. It allows us to create general heaps for objects of our choosing or for objects of a specific size. Luckily for us <a href="https://github.com/struct/PartitionAlloc">PartitionAlloc is easily extracted from WebKit</a>.
+        <br><br>
+        So how does PartitionAlloc differ from these generic heap allocators? At the core of PartitionAlloc are SuperPages. These are allocated in 2 MB blocks and begin with a guard page, followed by a page of meta data, an additional guard page, a number of Slot Spans, and then a final guard page. Slot Spans are a contiguous range of PartitionPage structures (metadata followed by chunks of user data). Assuming the hot path is taken (i.e. there’s already pages allocated to back a request for memory), a generic allocation call uses the requested size to determine the appropriate bucket. Once the right bucket has been identified, the value of freelistHead is saved, the pointer is reassigned to freelistHead->next, and the original head value is returned to the user. This ensures the memory we requested will be located in the partition we created for it and only alongside other allocations of a similar size. This describes the hot path taken when a page has already been allocated for this bucket size. The slow path is a little more complex and outside our scope. Knowing it isn't a prerequisite for understanding the security benefits provided by PartitionAlloc.
+        <br><br>
+        Using the PartitionAlloc API is relatively easy and the code comments describe it in detail. The first thing we need to do is create a PartitionAlloc class and then initialize its root member. Our options are PartitionAllocatorGeneric and SizeSpecificPartitionAllocator classes. The former tells PartitionAlloc to choose the right storage bucket for our object, but the latter is a template you must pass a size to in the declaration. The size you define sets the upper bound on allocations within that partition. If we try to allocate larger objects, the allocation will fail. This is helpful in mitigating use-after-free vulnerabilities by keeping objects that an attacker may be able to create in a particular partition capped at a maximum size. We create these class instances anywhere we want to allocate memory or create objects, call init on them, and then use the allocation functions like we would malloc. The only difference is we need to pass our partition root along with the size we are requesting. Here is an example that shows a simple use case of both classes:
+        <br><br>
+        <script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+
+        <pre class="prettyprint" lang-html="cpp" style="border: 0;">
+// SizeSpecificPartitionAllocator example usage
+SizeSpecificPartitionAllocator<1024> mySzSpecificAllocator;
+mySzSpecificAllocator.init();
+void *p = PartitionAlloc(mySzSpecificAllocator.root(), sz);
+PartitionFree(p);
+mySzSpecificAllocator.shutdown();
+
+// PartitionAllocatorGeneric example usage
+PartitionAllocGeneric myGenericAllocator;
+myGenericAllocator.init();
+void *p = partitionAllocGeneric(myGenericAllocator.root(), sz);
+partitionFreeGeneric(myGenericAllocator.root(), p);
+myGenericAllocator.shutdown();
+        </pre>
+        PDFium has its own memory allocation functions which are just wrappers around calloc, realloc, and free. This is fairly standard and makes our porting job easier because it means we don't have to patch dozens of different call sites, only a handful. Overall I identified only 11 functions and macros that needed to be patched. In addition to this, there was also a stray call to malloc/calloc here and there that was modified to call these functions and macros.
+        <br><br>
+        <pre class="prettyprint" lang-html="cpp" style="border: 0;">
+    FX_SafeRealloc
+    FX_AllocOrDie
+    FX_TryAlloc
+    FX_Free
+    FXMEM_DefaultAlloc
+    FXMEM_DefaultRealloc
+    FXMEM_DefaultFree
+    CPDF_Object::operator new
+    CPDF_Object::operator delete
+    CJS_Object::operator new
+    CJS_Object::operator delete
+        </pre>
+
+        Many CPDF_* objects inherit from CPDF_Object, so they benefit from its overloaded new and delete operators. Here is an example of the patch for FX_AllocOrDie to allocate from a partition instead of calling calloc (original comments removed for brevity):
+
+        <br><br>
+
+            <pre class="prettyprint" lang-html="cpp" style="border: 0;">
+inline void* FX_AllocOrDie(size_t num_members, size_t member_size) {
+#ifdef PDFIUM_PARTITIONALLOC
+  if (num_members < std::numeric_limits<size_t>::max() / member_size) {
+    void *p = partitionAllocGeneric(g_pdfium_genericAllocator.root(), num_members * member_size);
+    memset(p, 0x0, num_members * member_size);
+    return p;
+  }
+#else
+  if (void* result = calloc(num_members, member_size)) {
+    return result;
+  }
+#endif
+  FX_OutOfMemoryTerminate();
+  return nullptr;
+}
+          </pre>
+
+       <i>Note: You can find my full patch <a href="https://gist.github.com/struct/0b1a96f7fdfddca91cf0">here on GitHub</a>. It includes some modifications to the gypi file that is used during Chromes build process. I don't expect anyone to use it and compile their own Chrome binary. I am posting it solely as an example of how simple and approachable it is to use PartitionAlloc in your program.</i><br><br>
+
+       Are heap related vulnerabilities in PDFium no longer exploitable? Not quite. Unfortunately this patch is pretty simple and has a few key things missing from it. There are still some objects that don't inherit from CPDF_Object or CJS_Object and are still allocated with the default new operator. This means there is no guarantee where storage for them will be allocated. This is pretty simple to track down and fix via overloaded new and delete operators. There are still other ways to exploit vulnerabilities regardless of the heap allocator being used, however there is no doubt that hardened allocators like this help raise the bar for attackers.<br><br>
+
+       Extracting PartitionAlloc and using it your own program is <a href="https://github.com/struct/PartitionAlloc">not as difficult</a> as it may seem at first. The security benefits of using it may outweigh the upfront cost of porting your code. Performance concerns due to memory fragmentation is another issue that may need to be evaluated on an individual basis. For server side processes, especially those that fork children to handle short-term requests, this may not be a concern at all.
+      </p>
+      </section>
+      <footer>
+        <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
+      </footer>
+    </div>
+    <script src="javascripts/scale.fix.js"></script>
+              <script type="text/javascript">
+            var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+            document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+          </script>
+          <script type="text/javascript">
+            try {
+              var pageTracker = _gat._getTracker("UA-65842316-1");
+            pageTracker._trackPageview();
+            } catch(err) {}
+          </script>
+  </body>
+</html>
