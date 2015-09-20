@@ -50,7 +50,7 @@
 // SizeSpecificPartitionAllocator example usage
 SizeSpecificPartitionAllocator<1024> mySzSpecificAllocator;
 mySzSpecificAllocator.init();
-void *p = PartitionAlloc(mySzSpecificAllocator.root(), sz);
+void *p = partitionAlloc(mySzSpecificAllocator.root(), sz);
 PartitionFree(p);
 mySzSpecificAllocator.shutdown();
 
