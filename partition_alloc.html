@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Root Cause</title>
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/github-light.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1><a href='http://struct.github.io'>Root Cause</a></h1>
+        <p></p>
+        <p class="view">
+        <a href="https://twitter.com/chrisrohlf">Twitter</a><br>
+        <a href="https://github.com/struct">GitHub</a><br>
+        <a href="https://www.linkedin.com/profile/view?id=9681373">LinkedIn</a><br>
+        <a href="https://keybase.io/chrisrohlf">Keybase</a><br>
+        <a href="https://github.com/struct/research">Research</a><br>
+        <a href="resume.html">About</a><br>
+        <a href="mailto:chris.rohlf@gmail.com">Email</a>
+        </p>
+      </header>
+      <section>
+        <h2><div id='post0'>PartitionAlloc - A shallow dive and some rand</div></h2>
+        <p>
+        January 22, 2016<br>
+        Chris Rohlf<br><br>
+        
+        In a <a href="http://struct.github.io/pdfium_partitionalloc.html">previous article</a> I ported an existing third party library in Chrome, PDFium, to use PartitionAlloc for a majority of its memory allocations. PartitionAlloc is the heap allocator in Chrome with built-in exploit mitigations. It substantially raises the bar for exploitation of use-after-free vulnerabilities in Chrome primarily through heap isolation. In this second article I will explore some of the implementation details of PartitionAlloc and introduce a patch I wrote to harden it further.
+
+        <br><br>
+        To understand the PartitionAlloc design choices it is helpful to understand one of its predecessors. There used to be a little known piece of code in WebKit named <a href="https://lists.webkit.org/pipermail/webkit-dev/2012-November/022855.html">RenderArena</a>. RenderArena was a <a href="https://en.wikipedia.org/wiki/Slab_allocation">slab based allocator</a> that managed all memory allocation for any C++ object that inherited from the RenderObject class via overloaded new and delete operators. Like other parts of WebKit, the Render code at the time was notoriously buggy and contained many use-after-free vulnerabilities. Unlike similar vulnerable code patterns in WebCore, exploiting RenderObject use-after-free vulnerabilities <a href="http://2012.hackitoergosum.org/blog/wp-content/uploads/2012/04/HES2012-gwicherski-exploiting-a-coalmine.pdf">proved rather difficult</a> due to the nature of this allocator. This was because, by design, you could only allocate other objects in the same heap if they inherited from RenderObject. This design choice makes the typical approach to exploiting use-after-free vulnerabilities in Chrome, (replacing free'd WebCore objects with JavaScript objects), a non-starter. Despite the WebKit project attempting to remove RenderArena some Chrome engineers recognized this security property and wanted to preserve it. PartitionAlloc was created with the same security property as RenderArena, object and/or size specific heaps. It <a href="https://codereview.chromium.org/20231002">eventually replaced</a> RenderArena for RenderObjects and became the default allocator for other types of objects in Chrome including DOM nodes in WebCore.
+        <br><br>
+
+        Using the PartitionAlloc API is easy and the authors added comments that describe it in detail. The first thing we need to do is create a PartitionAlloc class and then initialize its root member. Our options are <i>PartitionAllocatorGeneric</i> and <i>SizeSpecificPartitionAllocator</i> classes. The former tells PartitionAlloc to choose the right storage bucket for our object, and the latter is a template you must pass a size to in the declaration. The size you define sets the upper bound on allocation sizes within that partition. If we try to allocate larger objects, the allocation will fail. This is helpful in limiting the number of objects that can be used in a use-after-free exploit. We create these class instances anywhere we want to allocate memory or create objects, call <i>init</i> on them, and then use the allocation functions like we would <i>malloc</i>. The only difference is we need to pass our partition root along with the size we are requesting. Here is an example that shows a simple use case of both classes:
+        <br><br>
+        <script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+
+        <pre class="prettyprint" lang-html="cpp" style="border: 0;">
+// SizeSpecificPartitionAllocator example usage
+SizeSpecificPartitionAllocator<1024> mySzSpecificAllocator;
+mySzSpecificAllocator.init();
+void *p = partitionAlloc(mySzSpecificAllocator.root(), 128);
+PartitionFree(p);
+mySzSpecificAllocator.shutdown();
+
+// PartitionAllocatorGeneric example usage
+PartitionAllocGeneric myGenericAllocator;
+myGenericAllocator.init();
+void *p = partitionAllocGeneric(myGenericAllocator.root(), 128);
+partitionFreeGeneric(myGenericAllocator.root(), p);
+myGenericAllocator.shutdown();
+        </pre>
+
+        Using PartitionAlloc to allocate and free memory is as easy as any other heap allocator. Its these implementation details, and how it makes exploitation harder, that set it apart. When a call to <i>partitionAlloc</i> is made the <i>partitionBucketAlloc</i> function is invoked. This is where the decision to take the hot path or the slow path is made.
+        <br><br>
+
+        <pre class="prettyprint" lang-html="cpp" style="border: 0;">
+ALWAYS_INLINE void* partitionBucketAlloc(PartitionRootBase* root, int flags, size_t size, PartitionBucket* bucket)
+{
+    PartitionPage* page = bucket->activePagesHead;
+    // Check that this page is neither full nor freed.
+    ASSERT(page->numAllocatedSlots >= 0);
+
+    void* ret = page->freelistHead;
+
+    if (LIKELY(ret != 0)) {
+    // ... hot path ...
+    } else {
+    // ... slow path ...
+        ret = partitionAllocSlowPath(root, flags, size, bucket);
+    }
+    </pre>
+
+        The Hot Path
+        <br><br>
+
+        This describes the hot path taken when a page has already been allocated for this bucket size. At the core of PartitionAlloc are SuperPages. These are allocated in 2 MB blocks and begin with a guard page, followed by a page of meta data, an additional guard page, a number of Slot Spans, and then a final guard page. These Slot Spans are a contiguous range of PartitionPage structures, which contain some meta data. Assuming the hot path is taken (i.e. theres already pages allocated to back a request for memory) a generic allocation call uses the requested size to determine the appropriate bucket. Once the right bucket has been identified the value of <i>freelistHead</i> is saved, the head pointer updated to <i>freelistHead->next</i>, and the original head value is returned to the user. This process ensures our object will be located in the partition we created for it and only along side objects of a similar size. The hot path is a very efficient and simple design.
+
+        <br><br>
+        The Slow Path
+        <br><br>
+
+        When a caller first tries to allocate memory using the <i>partitionAlloc</i> function there may not be a page ready to back the request. This usually triggers the 'slow path'. What this really means is that the allocator may need to request new pages from the operating system first before the PartitionAlloc code can slice it up for consumption. We will start at the <i>partitionAllocSlowPath</i> function, which is invoked shortly after <i>partitionAllocGeneric</i> or <i>partitionAlloc</i> is called.
+
+        <br><br>
+        One of the first things we learn about the slow path is that it handles any allocation request that can't be immediately handled by the fast path. The first case handled is Direct mappings for very large sizes and are handled by the <i>partitionDirectMap</i> function. The second case triggers a function, <i>partitionSetNewActivePage</i>, which takes the bucket originally passed to <i>partitionBucketAlloc</i> and scans its list of pages for a suitable one. A suitable page is described as one with free slots that can satisfy the allocation requested by the original caller. The third case checks the list of empty and decomitted pages. If a suitable page is found from either list it is selected. The fourth and final case means a brand new page is required. Each of these options require some work by the allocator to find or allocate memory in order to satisfy the request. That is why its referred to as the slow path.
+
+        <br><br>
+        Hardening PartitionAlloc
+        <br><br>
+
+        PartitionAlloc is well designed and implemented. Its design makes it much harder to exploit certain vulnerability classes by default, however theres always room for improvement. The PartitionAlloc developers documented a short security hardening TODO list in their comments. 
+<br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+// The following security properties could be investigated in the future:
+// - Per-object bucketing (instead of per-size) is mostly available at the API,
+// but not used yet.
+// - No randomness of freelist entries or bucket position.
+// - Better checking for wild pointers in free().
+// - Better freelist masking function to guarantee fault on 32-bit.
+</pre>
+        <br>
+        Two of items stood out to me: <i>'No randomness of freelist entries or bucket position'</i> and <i>'Better checking for wild pointers in free()'</i>. The first one has the potential to frustrate exploit developers because it removes some predictability they may be relying on. For example take a scenario where an attacker has identified a heap overflow in a character array (1) in a partition. In PartitionAlloc there is no inline meta data to overwrite before or after the array. So he triggers the allocation of a function pointer table (2) directly adjacent to the vulnerable buffer. By overwriting beyond the bounds of the first buffer (1) he can corrupt the contents of the function pointer table (2).
+
+        <br><br><pre>
+        | 0xabcd1234 [Vulnerable char array (1)]
+        | ...
+        v 0xabcd1300 [Function pointer table (2)]
+        </pre>
+
+        By randomizing the order of the freelist we remove the predictability the attacker is relying on when the second buffer is allocated directly adjacent to the first. The allocator may return a pointer to a freelist entry behind the vulnerable buffer or an unpredictable number of bytes in front of it. This isn't a foolproof protection, there are still ways an exploit can bypass this randomization but its one more bar the exploit developer must bypass. The second protection may help detect and stop double free exploits that attempt to place non-heap buffers into a PartitionAlloc freelist.
+
+        <br><br>
+        Implementing the randomization of freelist entries is very straight forward and offers an immediate security benefit. My approach for implementing this follows. First we seed the system RNG using srand in each Partition's <i>init</i> function. Second we randomize the order of the list upon creation, and third we randomize which freelist entry is returned upon allocation.
+
+        <br><br>
+        This first patch just seeds the RNG via srand by passing it the current time plus some additional random bits from the current pool.
+        <br><br>
+
+<pre class="prettyprint" lang-html="patch" style="border: 0;">
+@@ -142,6 +143,10 @@ void partitionAllocInit(PartitionRoot* root, size_t numBuckets, size_t maxAlloca
+ {
+     parititonAllocBaseInit(root);
+ 
++    // Reseed the RNG using time() with some bits
++    // from the current random pool
++    srand(time(NULL) + (rand() % 100000));
++
+</pre>
+        <br>
+        The second patch is for the <i>partitionPageAllocAndFillFreelist</i> function where the freelist is first created. This is called whenever a new page is created, usually in the slow path. We create a vector of <i>PartitionFreelistEntry</i> pointers called <i>vfreelist</i> and fill it with pointers to each block in the list. We then randomize that vector using <i>std::random_shuffle</i> and rebuild the list one entry at a time.
+
+        <br><br>
+
+<pre class="prettyprint" lang-html="patch" style="border: 0;">
+@@ -564,16 +569,31 @@ static ALWAYS_INLINE char* partitionPageAllocAndFillFreelist(PartitionPage* page
+     page->numUnprovisionedSlots = numSlots;
+     page->numAllocatedSlots++;
+ 
++    std::vector< PartitionFreelistEntry *> vfreelist;
++
+     if (LIKELY(numNewFreelistEntries)) {
+         char* freelistPointer = firstFreelistPointer;
+         PartitionFreelistEntry* entry = reinterpret_cast< PartitionFreelistEntry*>(freelistPointer);
+         page->freelistHead = entry;
++        vfreelist.push_back(entry);
++
+         while (--numNewFreelistEntries) {
+             freelistPointer += size;
+-            PartitionFreelistEntry* nextEntry = reinterpret_cast< PartitionFreelistEntry*>(freelistPointer);
++            vfreelist.push_back(reinterpret_cast< PartitionFreelistEntry*>(freelistPointer));
++        }
++
++        std::random_shuffle(vfreelist.begin(), vfreelist.end());
++
++        entry = vfreelist[vfreelist.size()-1];
++        vfreelist.pop_back();
++        page->freelistHead = entry;
++
++        for(int i=0;i < vfreelist.size();i++) {
++            PartitionFreelistEntry* nextEntry = vfreelist[i];
+             entry->next = partitionFreelistMask(nextEntry);
+             entry = nextEntry;
+         }
++
+         entry->next = partitionFreelistMask(0);
+     } else {
+         page->freelistHead = 0;
+</pre>
+        <br>
+        In the third patch we modify the <i>partitionBucketAlloc</i> function to choose a random pointer from the freelist.
+        <br><br>
+<pre class="prettyprint" lang-html="patch" style="border: 0;">
+@@ -579,15 +582,37 @@ ALWAYS_INLINE void* partitionBucketAlloc(PartitionRootBase* root, int flags, siz
+     ASSERT(page->numAllocatedSlots >= 0);
+     void* ret = page->freelistHead;
+     if (LIKELY(ret != 0)) {
++        PartitionFreelistEntry* t = page->freelistHead;
++        PartitionFreelistEntry* z = t;
++
++        while(t) {
++            if((rand() % 10) == 1) {
++                break;
++            }
++
++            z = t;
++            t = partitionFreelistMask(t->next);
++        }
++
++        if(t)
++            ret = t;
++
+         // If these asserts fire, you probably corrupted memory.
+         ASSERT(partitionPointerIsValid(ret));
+         // All large allocations must go through the slow path to correctly
+         // update the size metadata.
+         ASSERT(partitionPageGetRawSize(page) == 0);
+-        PartitionFreelistEntry* newHead = partitionFreelistMask(static_cast< PartitionFreelistEntry*>(ret)->next);
+-        page->freelistHead = newHead;
++
++        if(ret == page->freelistHead) {
++            PartitionFreelistEntry* newHead = partitionFreelistMask(static_cast< PartitionFreelistEntry*>(ret)->next);
++            page->freelistHead = newHead;
++        } else {
++            z->next = t->next;
++        }
++
+</pre>
+        <br>
+        The same logic is applied in the slow path when an empty or decommitted page is found but with an existing freelist we can randomize allocations from. 
+        <br><br>
+<pre class="prettyprint" lang-html="patch" style="border: 0;">
+@@ -842,9 +862,30 @@ void* partitionAllocSlowPath(PartitionRootBase* root, int flags, size_t size, Pa
+     // usable freelist head.
+     if (LIKELY(newPage->freelistHead != nullptr)) {
+         PartitionFreelistEntry* entry = newPage->freelistHead;
+-        PartitionFreelistEntry* newHead = partitionFreelistMask(entry->next);
+-        newPage->freelistHead = newHead;
++        PartitionFreelistEntry* z = entry;
++
++        while(entry) {
++            if((rand() % 10) == 1) {
++                break;
++            }
++
++            z = entry;
++            entry = partitionFreelistMask(entry->next);
++        }
++
++        if(entry == nullptr) {
++            entry = newPage->freelistHead;
++        }
++
++        if(entry == newPage->freelistHead) {
++            PartitionFreelistEntry* newHead = partitionFreelistMask(entry->next);
++            newPage->freelistHead = newHead;
++        } else {
++            z->next = entry->next;
++        }
++
+</pre>
+        <br>
+        Using the patches above PartitionAlloc will always return a random pointer from the freelist anytime memory is allocated. The only exception to this is a DirectMap.
+        <br><br>
+        In the fourth patch we introduce some sanity checking for pointers in the <i>partitionFreeWithPage</i> free function by iterating the freelist and checking for double free's.
+
+        <br><br>
+<pre class="prettyprint" lang-html="patch" style="border: 0;">
+@@ -647,6 +672,14 @@ ALWAYS_INLINE void partitionFreeWithPage(void* ptr, PartitionPage* page)
+     ASSERT(!freelistHead || partitionPointerIsValid(freelistHead));
+     RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(ptr != freelistHead); // Catches an immediate double free.
+     ASSERT_WITH_SECURITY_IMPLICATION(!freelistHead || ptr != partitionFreelistMask(freelistHead->next)); // Look for double free one level deeper in debug.
++
++    PartitionFreelistEntry* f = freelistHead;
++
++    while(f != NULL) {
++        RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(f != ptr);
++        f = partitionFreelistMask(f->next);
++    }
++
+</pre>
+
+        <br>
+        These patches don't remove any of the existing security properties offered by PartitionAlloc (these are documented in PartitionAlloc.h). For example the <i>partitionFreeWithPage</i> function can still perform its immediate double-free check because free'd pointers are still added to the beginning of the list and randomization only occurs on creation and allocation.
+
+        <br><br>
+        There are some negative performance tradeoffs to these patches. When the list is first created in <i>partitionPageAllocAndFillFreelist</i> we pay a one time penalty of shuffling the list using <i>std::random_shuffle</i>. The bigger performance penalty is in <i>partitionBucketAlloc</i> when the hot path is taken for an allocation. While the time complexity of that penalty is O(n) this could be a real bottleneck for a large freelist, such as those with a small slotSize. This is because it may iterate the entire list for each allocation. 
+        <br><br>
+        Other Ideas
+        <br><br>
+        Studying exploit techniques and developing countermeasures for them is one the best security investments you can make. But that can be difficult when there are no exploits to study. Exploits for PartitionAlloc are few and far between, and for good reason, it's a hard target! 
+        <br><br>
+        There are more effective protections that are missing from PartitionAlloc such as delayed free. I have a working prototype of this but it isn't quite finished yet. There are other sanity checks builtin to PartitionAlloc and many can be enabled by simply enabling <i>ASSERT</i>s or changing them to <i>RELEASE_ASSERT_WITH_SECURITY_IMPLICATION</i>.
+        <br><br>
+        As usual these patches are only meant to illustrate what is possible. Please use them at your own risk. All of the <a href="https://gist.github.com/struct/1a1aac3bf9628f9205f2">patches</a> covered here can be applied to <a href="http://github.com/struct/partitionalloc">this PartitionAlloc code</a>. They should also apply to the Chrome source tree with minimal effort.
+      </p>
+      </section>
+      <footer>
+        <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
+      </footer>
+    </div>
+    <script src="javascripts/scale.fix.js"></script>
+              <script type="text/javascript">
+            var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+            document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+          </script>
+          <script type="text/javascript">
+            try {
+              var pageTracker = _gat._getTracker("UA-65842316-1");
+            pageTracker._trackPageview();
+            } catch(err) {}
+          </script>
+  </body>
+</html>

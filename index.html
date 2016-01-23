@@ -30,6 +30,9 @@
         <p>My name is Chris Rohlf. I've been a security researcher, developer, and engineer since 2003 at fine places such as Yahoo, Leaf Security Research, Matasano Security, and US DoD.<br><br>
         Root Cause is a space to post articles about computation at scale, programming languages, security/cryptography, and esoteric memory safety vulnerabilities. My hope is that these posts will be preserved for future generations to study what primitive human beings once considered complex machines.</p><br>
 
+        <h3><div id='post1'><a href="partition_alloc.html">Hardening PartitionAlloc</a></div></h3>
+        <p>January 22, 2016 - In this article I dive into how PartitionAlloc works by first explaining its origins and how some of its basic allocation code paths work. I also introduce some basic hardening measures by randomizing the freelist and adding some basic double free protection.</p>
+        <br>
         <h3><div id='post1'><a href="pdfium_partitionalloc.html">Porting PartitionAlloc To PDFium</a></div></h3>
         <p>September 9th, 2015 - In this brief article I explain how I ported the Chrome PDFium library to use the PartitionAlloc heap allocator. This brings the benefits of fine graned memory separation for objects allocated inside the PDFium code.</p>
 
