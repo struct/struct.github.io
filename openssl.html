@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Root Cause by struct</title>
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/github-light.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1><a href='http://struct.github.io'>Root Cause</a></h1>
+        <p></p>
+        <p class="view">
+        <a href="https://twitter.com/chrisrohlf">Twitter</a><br>
+        <a href="https://github.com/struct">GitHub</a><br>
+        <a href="https://www.linkedin.com/profile/view?id=9681373">LinkedIn</a><br>
+        <a href="https://keybase.io/chrisrohlf">Keybase</a><br>
+        <a href="https://github.com/struct/research">Research</a><br>
+        <a href="resume.html">About</a><br>
+        <a href="mailto:chris.rohlf@gmail.com">Email</a>
+        </p>
+      </header>
+      <section>
+        <h2><div id='post0'>My heart is OK but my eyes are bleeding</div></h2>
+        <p>
+<i>This post originally appeared on the Leaf SR blog on April 11th, 2014.</i>
+<br><br>
+TL;DR: heartbleed is bad, but not world ending. OpenSSL is not any more vulnerable because of its freelists and would still be vulnerable without them.
+<br><br>
+We felt that there weren’t enough heartbleed write-ups yet, so we wrote another one. Unlike many of the other posts, we are not going to talk about the TLS protocol or why we think the heartbeat extension is pointless. Instead, we are going to focus on the bug itself and more specifically, why sensitive data gets leaked.
+<br><br>
+First we would like to state that, as far as complexity goes, the heartbleed vulnerability is nothing special, but that doesn’t mean it was easy to find. All bugs are easy to spot after someone else points them out to you. Hindsight is 20/20 after all. Riku, Antti and Matti at Codenomicon and Neel Mehta at Google all independently discovered this bug. Neel was also kind enough to sanity check this post before it went live (thank you Neel!) Whatever your feelings on vulnerability disclosure are, you should thank them for finding the bug and giving us all something interesting to talk about.
+<br><br>
+All of the code in this post is from openssl-1.0.1c, which is what I had running on an old virtual machine with Apache. First, let’s discuss some important OpenSSL data structures. For this discussion the ‘top’ level structure is SSL, which is defined in ssl.h as ssl_st with a typedef. Within this structure is a pointer s3 of type SSL3_STATE, which is a typedef of ssl3_state_st. Inside that structure is another structure of type SSL3_RECORD, which we reference as rrec. An SSL3_RECORD contains type and length values among other fields. The SSL3_STATE structure also contains rbuf, and wbuf of type SSL3_BUFFER. The SSL3_BUFFER structure contains a pointer to data buf, and len/offset/left members to track its usage. These buffers are allocated and deallocated often during a TLS exchange. For performance reasons, the OpenSSL developers wrote a separate freelist implementation to store them. This freelist implementation is apparently buggy but fairly easy to understand (more on this below). The freelist is actually two lists, one for read buffers (rbuf) and one for write buffers (wbuf). These lists are accessed via the SSL_CTX structure that contains wbuf_freelist and rbuf_freelist respectively. We reference the SSL_CTX structure via a pointer within the SSL structure. Heres some pseudo code to make this less confusing. Some variables have been cut for brevity.
+<br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+struct SSL {
+  SSL_CTX *ctx;
+  SSL3_STATE *s3;
+}
+
+struct SSL_CTX {
+  SSL3_BUF_FREELIST wbuf_freelist;
+  SSL3_BUF_FREELIST rbuf_freelist;
+}
+
+struct SSL3_STATE {
+  SSL3_BUFFER rbuf; /* read IO goes into here */
+  SSL3_BUFFER wbuf; /* write IO goes into here */
+  SSL3_RECORD rrec; /* each decoded record goes in here */
+  SSL3_RECORD wrec; /* goes out from here */
+}
+
+struct SSL3_BUF_FREELIST {
+  size_t chunklen;
+  unsigned int len;
+  SSL3_BUF_FREELIST_ENTRY *head;
+}
+
+struct SSL3_BUFFER {
+  unsigned char *buf; /* at least SSL3_RT_MAX_PACKET_SIZE bytes,
+                       * see ssl3_setup_buffers() */
+  size_t len; /* buffer size */
+  int offset; /* where to 'copy from' */
+  int left; /* how many bytes left */
+}
+
+struct SSL3_RECORD {
+  /*r */ int type; /* type of record */
+  /*rw*/ unsigned int length; /* How many bytes available */
+  /*r */ unsigned int off; /* read/write offset into 'buf' */
+  /*rw*/ unsigned char *data; /* pointer to the record data */
+  /*rw*/ unsigned char *input; /* where the decode bytes are */
+  /*r */ unsigned char *comp; /* only used with decompression - malloc()ed */
+}
+</pre>
+<br>
+So now that we understand some basic structures lets examine the vulnerability. Heartbleed is an out-of-bounds read in the OpenSSL TLS Heartbeat implementation. The tls1_process_heartbeat function is responsible for parsing a TLS heartbeat message. On line 2586 a pointer to the payload is assigned from s, which is a pointer to a structure of type SSL. This structure contains a pointer s3 of type SSL3_STATE. Within the structure pointed to by s3 is an array of SSL3_RECORD types which we reference as rrec. The pointer p now points at the first record. On line 2593 a length value is extracted from the record and assigned to the variable payload [1]. On line 2610 some memory is allocated for the response message. The call to OPENSSL_Malloc allocates enough memory for (19+payload) bytes, the return value is assigned to the pointer buffer. On line 2616 a call to memcpy will copy from pl (which points at the record just beyond the type and length fields) into bp (the buffer we just allocated on line 2610) exactly payload number of bytes.
+<br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+2584 tls1_process_heartbeat(SSL *s)
+2585 {
+2586   unsigned char *p = &s->s3->rrec.data[0], *pl;
+2587   unsigned short hbtype;
+2588   unsigned int payload;
+2589   unsigned int padding = 16; /* Use minimum padding */
+2590
+2591   /* Read type and payload length first */
+2592   hbtype = *p++;
+2593   n2s(p, payload);
+2594   pl = p;
+2595
+2596   if (s->msg_callback)
+2597     s->msg_callback(0, s->version, TLS1_RT_HEARTBEAT,
+2598     &s->s3->rrec.data[0], s->s3->rrec.length,
+2599     s, s->msg_callback_arg);
+2600
+2601   if (hbtype == TLS1_HB_REQUEST)
+2602   {
+2603     unsigned char *buffer, *bp;
+2604     int r;
+2605
+2606   /* Allocate memory for the response, size is 1 bytes
+2607   * message type, plus 2 bytes payload length, plus
+2608   * payload, plus padding
+2609   */
+2610   buffer = OPENSSL_malloc(1 + 2 + payload + padding);
+2611   bp = buffer;
+2612
+2613   /* Enter response type, length and copy payload */
+2614   *bp++ = TLS1_HB_RESPONSE;
+2615   s2n(payload, bp);
+2616   memcpy(bp, pl, payload);
+2617   bp += payload;
+2618   /* Random padding */
+2619   RAND_pseudo_bytes(bp, padding);
+2620
+2621   r = ssl3_write_bytes(s, TLS1_RT_HEARTBEAT, buffer, 3 + payload + padding);
+</pre>
+<br>
+So the bug here is that the size of the record pl points at does not have to match the value of payload. Sending a TLS heartbeat message with a length value larger than the actual size of the record will cause the memcpy to read beyond the bounds of the record and return whatever is in memory after the record to the user. This bug is simple and already well documented else where. But lets take a step back and focus on that OPENSSL_malloc call. OPENSSL_malloc is a macro that calls CRYPTO_malloc in mem.c. CRYPTO_malloc calls malloc_ex_func which is a function pointer that can be configured in OpenSSL for calling a different malloc implementation:
+<br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+static void *(*malloc_func)(size_t) = malloc;
+static void *default_malloc_ex(size_t num, const char *file, int line) { 
+return malloc_func(num); }
+static void *(*malloc_ex_func)(size_t, const char *file, int line) = default_malloc_ex;
+</pre>
+<br>
+If we look at the function prototypes above we see that default_malloc_ex returns malloc_func which is a function pointer to… wait for it… malloc. This may come as a shock to you but there seems to be some confusion on the internet about what memory is exposed when triggering this bug. More on this in just a few paragraphs.
+<br><br>
+So we know CRYPTO_malloc can boil down to a call to malloc, and does by default. This is where our data gets written to but not where we read it from. In order to understand why sensitive data gets leaked we need to understand the freelists that store the records where we are copying data from. If we look at SSL_CTX_new we see the following code that sets up these freelists for the first time. Most of the members are initialized to 0 with the exception of wbuf_freelist and rbuf_freelist which are assigned the return value of a call to OPENSSL_malloc.
+<br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+1677 SSL_CTX *SSL_CTX_new(const SSL_METHOD *meth)
+1678 {
+...
+1827 #ifndef OPENSSL_NO_BUF_FREELISTS
+1828   ret->freelist_max_len = SSL_MAX_BUF_FREELIST_LEN_DEFAULT;
+1829   ret->rbuf_freelist = OPENSSL_malloc(sizeof(SSL3_BUF_FREELIST));
+1830   if (!ret->rbuf_freelist)
+1831   goto err;
+1832   ret->rbuf_freelist->chunklen = 0;
+1833   ret->rbuf_freelist->len = 0;
+1834   ret->rbuf_freelist->head = NULL;
+1835   ret->wbuf_freelist = OPENSSL_malloc(sizeof(SSL3_BUF_FREELIST));
+1836   if (!ret->wbuf_freelist)
+1837   {
+1838     OPENSSL_free(ret->rbuf_freelist);
+1839     goto err;
+1840   }
+1841   ret->wbuf_freelist->chunklen = 0;
+1842   ret->wbuf_freelist->len = 0;
+1843   ret->wbuf_freelist->head = NULL;
+</pre>
+<br>
+This is allocating the first entry in the rbuf_freelist and wbuf_freelist using a call to OPENSSL_malloc, which we know calls down into malloc. So we know the memory that backs these lists is originally allocated with malloc, so it lives along side other regular chunks allocated by code that called malloc directly. Chunks get added to the freelist using freelist_insert and retrieved from the freelist using freelist_extract. When the freelist_extract function is called for the first time the list chunklen is 0 (see above), which means line 688 will not be reached, leaving ent and result = NULL which means the call to OPENSSL_malloc on line 698 will happen. This just returns a chunk from the heap managed by malloc. If these conditions are met then the list has existing free chunks available for use that match the requested size. This chunk is handed back to the caller and the size of the list is decremented by one, if this was the last chunk in the list then the chunklen is reset to 0.
+<br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+ 678 static void *
+ 679 freelist_extract(SSL_CTX *ctx, int for_read, int sz)
+ 680 {
+ 681   SSL3_BUF_FREELIST *list;
+ 682   SSL3_BUF_FREELIST_ENTRY *ent = NULL;
+ 683   void *result = NULL;
+ 684
+ 685   CRYPTO_w_lock(CRYPTO_LOCK_SSL_CTX);
+ 686   list = for_read ? ctx->rbuf_freelist : ctx->wbuf_freelist;
+ 687   if (list != NULL && sz == (int)list->chunklen)
+ 688     ent = list->head;
+ 689   if (ent != NULL)
+ 690   {
+ 691     list->head = ent->next;
+ 692     result = ent;
+ 693     if (--list->len == 0)
+ 694     list->chunklen = 0;
+ 695   }
+ 696   CRYPTO_w_unlock(CRYPTO_LOCK_SSL_CTX);
+ 697   if (!result)
+ 698     result = OPENSSL_malloc(sz);
+ 699   return result;
+ 700 }
+ </pre>
+
+When a caller is done with a chunk it retrieved from the list a call to freelist_insert is made. This function first checks to see if the size requested is the same as the list chunklen or if the list chunklen is 0. A further check to see if the list len is already at freelist_max_len (32 by default) and size is greater than sizeof(SSL3_BUF_FREELIST_ENTRY). If these conditions are satisfied then the list chunklen is set to the requested size (it may have been 0 if not previously used), ent is assigned the value of the chunk to be inserted, the next pointer is set to the head, the list head is set to ent, the list size is incremented, and finally the mem pointer is set to NULL. If these conditions were never initially met then mem would be free’d via a call to OPENSSL_free on line 725.
+<br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+ 702 static void
+ 703 freelist_insert(SSL_CTX *ctx, int for_read, size_t sz, void *mem)
+ 704 {
+ 705   SSL3_BUF_FREELIST *list;
+ 706   SSL3_BUF_FREELIST_ENTRY *ent;
+ 707
+ 708   CRYPTO_w_lock(CRYPTO_LOCK_SSL_CTX);
+ 709   list = for_read ? ctx->rbuf_freelist : ctx->wbuf_freelist;
+ 710   if (list != NULL &&
+ 711     (sz == list->chunklen || list->chunklen == 0) &&
+ 712     list->len < ctx->freelist_max_len &&
+ 713     sz >= sizeof(*ent))
+ 714     {
+ 715       list->chunklen = sz;
+ 716       ent = mem;
+ 717       ent->next = list->head;
+ 718       list->head = ent;
+ 719       ++list->len;
+ 720       mem = NULL;
+ 721     }
+ 722
+ 723     CRYPTO_w_unlock(CRYPTO_LOCK_SSL_CTX);
+ 724     if (mem)
+ 725       OPENSSL_free(mem);
+ 726 }
+</pre><br>
+The freelist can help speed up the performance of OpenSSL connections if a specific buffer size is repeatedly requested. The freelist (both read and write) don’t care what the contents of those chunks are or what callers invoke them. These buffers are normally setup by ssl3_setup_buffers (which calls ssl3_setup_read_buffer and ssl3_setup_write_buffer), and accessed as s3->rbuf, and finally passed back via ssl3_release_read_buffer and ssl3_release_write_buffer. Ok so we now understand the basics of the SSL freelist(s).
+<br><br>
+So why is any of this interesting when it comes to heartbleed? Well the internet is on fire with proof of concept code for the bug that reliably leaks sensitive session credentials and supposedly private keys. In order to understand what will be leaked we only need to look at our ssl->s3->wbuf.buf and ssl->s3->rbuf.buf pointers. We know these may be stored in the freelist along side other chunks of the same exact size. We also know the freelist has a max size, which is 32 by default. So the easy way to start allocating records from outside of this list is to simply fill up the list via multiple connections or make several requests of different sizes. The latter works because the list only holds chunks of a specific size.
+<br><br>
+So while OpenSSL does utilize a freelist for these records they are still backed by memory returned by malloc which means they may live adjacent to other memory that is held and used by other components such as the web server that is using OpenSSL. This is why we see sensitive data when we trigger the bug. Another reason we can leak sensitive data is that OpenSSL performs the decryption of these records ‘in place’. This means that the SSL record buffers are decrypted in their current location in memory.
+<br><br>
+There is currently some discussion on how OpenSSL mitigated the security mitigations of default heap allocators by introducing their own freelist. I mostly disagree with this view.
+<br><br>
+For starters the freelist is backed by the system malloc (by default). They did not implement their own vulnerable malloc() from scratch.
+Similar freelist implementations and designs can be found in most moderately complex applications you’re running on your desktop right now.
+This vulnerability would still be exploitable, and would still leak sensitive chunks of memory with or without the freelist.
+Ironically if you wanted to leak data from the general heap the freelist is something you have to get around first.
+The points above are an important take away for understanding exploitation and the overall severity of a vulnerability.
+<br><br>
+In conclusion, heartbleed is bad, but don’t panic. The OpenSSL code may be a mess but its had several remote code execution vulnerabilities in recent years that no one paid too much attention to. The internet is still here, you can still securely browse your email that no one else cares about, and the food supply is plenty.
+<br><br>
+Written By: @ChrisRohlf
+
+[1] Naming a length variable ‘payload’ is borderline sociopathic
+        </p>
+      </section>
+      <footer>
+        <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
+      </footer>
+    </div>
+    <script src="javascripts/scale.fix.js"></script>
+              <script type="text/javascript">
+            var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+            document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+          </script>
+          <script type="text/javascript">
+            try {
+              var pageTracker = _gat._getTracker("UA-65842316-1");
+            pageTracker._trackPageview();
+            } catch(err) {}
+          </script>
+  </body>
+</html>
