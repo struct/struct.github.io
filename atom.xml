@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+	<channel>
+		<title>Struct - Root Cause</title>
+		<description>Root Cause - RSS Feed</description>
+		<link>https://struct.github.io/</link>
+			<item>
+				<title>Hardening Partition Alloc</title>
+				<description>January 22, 2016 - In this article I dive into how PartitionAlloc works by first explaining its origins and how some of its basic allocation code paths work. I also introduce some basic hardening measures by randomizing the freelist and adding some basic double free protection.</description>
+				<link>https://struct.github.io/partition_alloc.html</link>
+			</item>
+			<item>
+				<title>Porting PartitionAlloc to PDFium</title>
+				<description>September 9th, 2015 - In this brief article I explain how I ported the Chrome PDFium library to use the PartitionAlloc heap allocator. This brings the benefits of fine graned memory separation for objects allocated inside the PDFium code.</description>
+				<link>https://struct.github.io/pdfium_partitionalloc.html</link>
+			</item>
+	</channel>
+</rss>
