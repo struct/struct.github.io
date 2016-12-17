@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Root Cause</title>
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/github-light.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1><a href='http://struct.github.io'>Root Cause</a></h1>
+        <p></p>
+        <p class="view">
+        <a href="https://twitter.com/chrisrohlf">Twitter</a><br>
+        <a href="https://github.com/struct">GitHub</a><br>
+        <a href="https://www.linkedin.com/in/chrisrohlf">LinkedIn</a><br>
+        <a href="https://keybase.io/chrisrohlf">Keybase</a><br>
+        <a href="https://github.com/struct/research">Research</a><br>
+        <a href="resume.html">About</a><br>
+        <a href="mailto:chris.rohlf@gmail.com">Email</a>
+        </p>
+      </header>
+      <section>
+        <h2><div id='post0'>Glibc 2.11 stops the House of Mind</div></h2>
+        <p>
+        <script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+        <i>(Originally published January 2010)</i>
+<br><br>
+I was reading malloc.c from the Glibc 2.11 sources and I noticed a new check in the _int_free() function:
+        <br><br><pre class="prettyprint" lang-html="cpp" style="border: 0;">
+(malloc.c)
+[4965]      bck = unsorted_chunks(av);
+[4966]      fwd = bck->fd;
+[4967]      if (__builtin_expect (fwd->bk != bck, 0))
+[4968]    {
+[4969]      errstr = "free(): corrupted unsorted chunks";
+[4970]      goto errout;
+[4971]    }
+[4972]      p->fd = fwd;
+[4973]      p->bk = bck;
+[4974]     if (!in_smallbin_range(size))
+[4975]    {
+[4976]      p->fd_nextsize = NULL;
+[4977]      p->bk_nextsize = NULL;
+[4978]    }
+[4979]    bck->fd = p;
+[4980]    fwd->bk = p;
+</pre><br>
+The check starting on line 4967 appears to have been added this past June. If you're not a security person then let me bring you up to date. Corrupting heap meta data traditionally allows you to execute arbitrary code. There are plenty of papers out there you can read to catch up on the subject, but theres one important fact you should be aware of. Most of these techniques no longer work within 1 to 2 years of publication. This is because the libc maintainers add small bits of code like the one above to save you from yourself. This particular new patch is checking to see whether the arena's bin contains a location that points to a valid chunk. If that check wasn't there (as is the case in glibc 2.10.1) then the 'fwd->bk = p' line can be used to write the address of 'p' anywhere. If that didn't make sense to you then you're probably not a glibc maintainer or a neurotic security researcher, consider yourself normal.
+<br><br>
+If you're not familiar with the House of Mind then you should read 'The Malloc Maleficarum' written by Phantasmal Phantasmagoria:
+<i>
+"The method used involves tricking the wrapper invoked by free(),
+called public_fREe(), into supplying the _int_free() internal
+function with a designer controlled arena. This can subsequently
+lead to an arbitrary memory overwrite. A call to free() actually
+invokes a wrapper called public_fREe():"</i><br><br>
+
+I won't be covering these techniques in great detail here but essentially what can happen is through a single call to free() on a chunk we can overflow we can fool ptmalloc into using an arena structure we control. Certain members of the arena structure allow for arbitrary code execution to occur if the right conditions can be met. This technique currently still works in Ubuntu 9.10. The short story is: the new validation added to Glibc 2.11 stops the House of Mind technique.
+<br><br>
+... or does it?
+<br><br>
+The Malloc Maleficarum covers a second House of Mind technique which, unlike the first one, requires we place our arena at the location we want to overwrite. It still leverages a single call to free() and the trust the allocator has in the arena structure (its also been covered in other papers, see the bottom of this post) but the difference in the second technique is that the arenas 'fastbinY' container is used instead of 'bins'. This takes _int_free down a different code path, a far less constrained one. However the pointer exchange is not quite the same in this code path and so in order to gain code execution we need to place the start of our arena just before the data we want to overwrite. We can gain control of execution because we get a value of our choice written back to arena->fastbin[X] It's not an ideal situation, but it should still work in Glibc 2.11.
+
+        <br><br><pre class="prettyprint" lang-html="cpp" style="border: 0;">
+(malloc.c)
+[4879] p->fd = *fb;
+[4880] *fb = p; // This is how we get an arbitrary 4 byte overwrite
+</pre><br>
+
+Perhaps more importantly then what does work is what will fix it. Because this technique is somewhat unreliable it may not make sense to further burden the allocator with yet another integrity check. But we should explore our options. We could try to stop all arena based attacks by inspecting where the arena itself resides, but this is a rather clumsy way of approaching the problem, and with ASLR enabled, it probably won't be too successful. A better solution might be to first check whether the chunk 'fb' points to contains a valid forward pointer to the next chunk in its list. But fastbin pointers are only singly linked, thus a subsequent check of the next chunks bwk pointer would not work. The reason they are not doubly linked is because they are never removed from these lists and consolidated with other free chunks, this of course helps performance of smaller, frequently allocated/free'd chunks. Another potential fix might be to check the current fastbin (the one that will be overwritten) entries chunk size, because the arena has to be placed near/on the region of memory we want to overwrite, the attacker most likely can not control what the size is. This partially validates that the 1) the location is valid (its mapped) and 2) has a size between 0 and MAX_FASTBIN. It might look something like this:
+
+        <br><br><pre class="prettyprint" lang-html="cpp" style="border: 0;">
+--- malloc.c 2009-10-30 13:17:08.000000000 -0400
++++ malloc-a.c 2010-01-20 08:28:36.000000000 -0500
+@@ -4852,6 +4852,12 @@
+set_fastchunks(av);
+fb = &fastbin (av, fastbin_index(size));
++ if (*fb->size > get_max_fast())
++ {
++  errstr = "invalid fastbin entry (free)";
++  goto errout;
++ }
++
+#ifdef ATOMIC_FASTBINS
+mchunkptr fd;
+mchunkptr old = *fb;
+</pre>
+<br>
+This of course is not fool proof, but its the best I've come up with in the short time I've thought about it. After a private conversation with a friend of mine who coincidentally happens to be doing some similar research, I'm not sure the integrity of the fastbin can be %100 verified in its current form.
+        </p>
+      </section>
+      <footer>
+        <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
+      </footer>
+    </div>
+    <script src="javascripts/scale.fix.js"></script>
+              <script type="text/javascript">
+            var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+            document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+          </script>
+          <script type="text/javascript">
+            try {
+              var pageTracker = _gat._getTracker("UA-65842316-1");
+            pageTracker._trackPageview();
+            } catch(err) {}
+          </script>
+  </body>
+</html>

