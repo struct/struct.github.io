@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Root Cause</title>
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/github-light.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1><a href='http://struct.github.io'>Root Cause</a></h1>
+        <p></p>
+        <p class="view">
+        <a href="https://twitter.com/chrisrohlf">Twitter</a><br>
+        <a href="https://github.com/struct">GitHub</a><br>
+        <a href="https://www.linkedin.com/in/chrisrohlf">LinkedIn</a><br>
+        <a href="https://keybase.io/chrisrohlf">Keybase</a><br>
+        <a href="https://github.com/struct/research">Research</a><br>
+        <a href="resume.html">About</a><br>
+        <a href="mailto:chris.rohlf@gmail.com">Email</a>
+        </p>
+      </header>
+      <section>
+        <h2><div id='post0'>Chrome Oilpan - Meta Data, Freelists and more</div></h2>
+        April 7th, 2017<br>
+        Chris Rohlf<br><br>
+        <p>Chrome originally used WebKit as its HTML, DOM, and web layout engine. In those days the browser used <a href="http://goog-perftools.sourceforge.net/doc/tcmalloc.html">TCMalloc</a> for most of its heap allocations. This made exploiting linear heap overflows and use-after-free vulnerabilities relatively straight forward. But in 2013 the WebKit code was forked into the <a href="https://en.wikipedia.org/wiki/Blink_(web_engine)">Blink</a> project. Around this time Chrome switched to <a href="https://struct.github.io/partition_alloc.html">PartitionAlloc</a> for heap allocations for everything from Blink DOM nodes to standard containers that were often the target of memory disclosure exploits.
+        <br><br>
+        PartitionAlloc provided some pretty strong security guarantees: guard pages to protect against linear overflows from user data into page level meta-data, separation of allocations by size and type (if the API was used correctly), double free detection, masking of the freelist pointer, and no inline meta data between user chunks. I previously <a href="https://github.com/struct/HardenedPartitionAlloc">made an attempt</a> at hardening PartitionAlloc even further by adding randomization of the freelist and introducing delayed free. PatitionAlloc is no longer used to allocate memory for DOM related C++ objects in Chrome. Instead a new garbage collected memory allocator, Oilpan, is used. Oilpan is a different design with its own tradeoffs that optimize for performance. But those tradeoffs can introduce opportunity for an exploit developer. This post is about some of those design decisions that resulted in a lack of exploit mitigations traditonally found in more mature memory allocators.
+        <br><br>
+        In 2015 Blink switched to <a href="https://chromium.googlesourcecom/chromium/src/+/master/third_party/WebKit/Source/platform/heap/BlinkGCAPIReference.md">Oilpan</a> for allocation of DOM objects that inherit from <a href="https://chromium.googlesource.com/chromium/blink/+/35c2b268933ccc2aa42da5bbd04109a3e87f4c19/Source/core/dom/Node.h#174">Node</a>. The <i>Node</i> class inherits from <i>EventTarget</i> which in turn inherits from <a href="https://chromium.googlesource.com/chromium/src/+/master/third_party/WebKit/Source/platform/heap/BlinkGCAPIReference.md#GarbageCollectedFinalized">GarbageCollectedFinalized</a>. This remains the case for recent versions of Chrome (version 59 is the latest as of this writing). The <i>Node</i> object overloads the <i>new</i> operator and calls a special Oilpan allocation function.
+        <br><br>
+        Oilpan is a garbage collector, which means for these objects there is no reference count via the familiar WebKit <i>RefPtr</i> template. Oilpan supplies its own heap allocator which maintains little of the security properties that PartitionAlloc provided. I won't spend too much time explaining how the Oilpan GC works. For that I suggest reading some of the markdown documents linked above, they're really quite good. But we will spend some time looking at the basic allocation routines.
+        <br><br>
+        Before we can dive into the issue we need to understand how Oilpan allocates memory for Blink objects. In this context we are specifically talking about Blink objects that inherit from the <i>Node</i> class. As an example this means, among other things, any HTML element exposed to the browser DOM. The implementation of these elements is where you typically find use-after-free vulnerabilities. Our journey into the Oilpan allocator starts in the <i>Node</i> class definition in the overloaded <i>new</i> operator shown below.
+        <br><br>
+
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+// Node.h
+void* operator new(size_t size)
+{
+    return allocateObject(size, false);
+}
+static void* allocateObject(size_t size, bool isEager)
+{
+    ThreadState* state = ThreadStateFor<ThreadingTrait<Node>::Affinity>::state();
+    const char typeName[] = "blink::Node";
+    return ThreadHeap::allocateOnArenaIndex(state, size, isEager ? BlinkGC::EagerSweepArenaIndex : BlinkGC::NodeArenaIndex, GCInfoTrait<EventTarget>::index(), typeName);
+}
+</pre>
+      <br>
+      In this overloaded <i>new</i> operator we call a function <i>allocateObject</i>, this function calls a static function <i>ThreadHeap::allocateOnArenaIndex</i> and passes in a pointer to the Nodes <i>ThreadState</i> and the size of the allocation requested. As many objects inherit from <i>Node</i>, the size will vary between calls. That size is passed to <i>allocationSizeFromSize</i> which is used to calculate the actual size needed for the allocation. Here's the entire function:
+      <br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+static inline size_t allocationSizeFromSize(size_t size)
+{
+    // Check the size before computing the actual allocation size.  The
+    // allocation size calculation can overflow for large sizes and the check
+    // therefore has to happen before any calculation on the size.
+    RELEASE_ASSERT(size < maxHeapObjectSize);
+
+    // Add space for header.
+    size_t allocationSize = size + sizeof(HeapObjectHeader);
+    // Align size with allocation granularity.
+    allocationSize = (allocationSize + allocationMask) & ~allocationMask;
+    return allocationSize;
+}
+</pre>
+    <br>
+      The first checks ensures the requested size isn't too big. The max size that can be requested here is 134217728 bytes. The allocation size is increased by adding the size of the HeapObjectHeader object (more on this in a few minutes) and then finally ensuring it is properly aligned.
+      <br><br>
+      The <i>NormalPageArena</i> pointer is dereferenced to call the <i>allocateObject</i> function to allocate the memory for the <i>Node</i> object. Note that <i>Address</i> is defined as <i>using Address = uint8_t*;</i>.
+<br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+// Heap.h
+inline Address ThreadHeap::allocateOnArenaIndex(ThreadState* state, size_t size, int arenaIndex, size_t gcInfoIndex, const char* typeName)
+{
+    ASSERT(state->isAllocationAllowed());
+    ASSERT(arenaIndex != BlinkGC::LargeObjectArenaIndex);
+    NormalPageArena* arena = static_cast<NormalPageArena*>(state->arena(arenaIndex));
+    Address address = arena->allocateObject(allocationSizeFromSize(size), gcInfoIndex);
+    HeapAllocHooks::allocationHookIfEnabled(address, size, typeName);
+    return address;
+}
+</pre>
+<br>
+The <i>allocateObject</i> function below determines whether we will take the fast path or the slow path. The fast path first checks if the requested size, <i>allocationSize</i>, is less than or equal to the remaining amount of free space in the arena. If this conditional is passed then the address of the current allocation point, <i>m_currentAllocationPoint</i> is assigned to a typedef'd uint8_t* <i>headerAddress</i>. The <i>NormalPageArena</i> member variables are updated to reflect the new objects size, and a <i>HeapObjectHeader</i> class instance is constructed at that address via the <i>new</i> operator. The resulting pointer is calculated by adding the address plus the size of the <i>HeapObjectHeader</i> and is returned to the caller.
+<br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+// HeapPage.h
+inline Address NormalPageArena::allocateObject(size_t allocationSize, size_t gcInfoIndex)
+{
+    if (LIKELY(allocationSize <= m_remainingAllocationSize)) {
+        Address headerAddress = m_currentAllocationPoint;
+        m_currentAllocationPoint += allocationSize;
+        m_remainingAllocationSize -= allocationSize;
+        ASSERT(gcInfoIndex > 0);
+        new (NotNull, headerAddress) HeapObjectHeader(allocationSize, gcInfoIndex);
+        Address result = headerAddress + sizeof(HeapObjectHeader);
+        ASSERT(!(reinterpret_cast<uintptr_t>(result) & allocationMask));
+
+        SET_MEMORY_ACCESSIBLE(result, allocationSize - sizeof(HeapObjectHeader));
+        ASSERT(findPageFromAddress(headerAddress + allocationSize - 1));
+        return result;
+    }
+    return outOfLineAllocate(allocationSize, gcInfoIndex);
+}
+</pre>
+<br>
+Before I explain the slow path via <i>outOfLineAllocate</i> I want to step back and talk about the <i>HeapObjectHeader</i> class as its very important for the context of this post. The <i>HeapObjectHeader</i> class is a single dword, <i>m_encoded</i>, of inline meta-data. Its a bit-field that encodes information about the allocation, and its completely unprotected from linear overwrites.
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+
+// HeapPage.h
+// HeapObjectHeader is 4 byte (32 bit) that has the following layout:
+//
+// | gcInfoIndex (14 bit) | DOM mark bit (1 bit) | size (14 bit) | dead bit (1 bit) | freed bit (1 bit) | mark bit (1 bit) |
+// - For non-large objects, 14 bit is enough for |size| because the blink
+//   page size is 2^17 byte and each object is guaranteed to be aligned with
+//   2^3 byte.
+// - For large objects, |size| is 0. The actual size of a large object is
+//   stored in LargeObjectPage::m_payloadSize.
+// - 1 bit used to mark DOM trees for V8.
+// - 14 bit is enough for gcInfoIndex because there are less than 2^14 types
+//   in Blink.
+</pre>
+<br>
+This dword, <i>m_encoded</i>, sits at the beginning of every allocation. Because there is no secret canary guarding this meta data it is a prime target for an exploit developer. Overwriting this value with a linear overwrite and triggering a call to the <i>NormalPageArena::coalesce</i> function will use the untrusted size to adjust the <i>startOfGap</i> pointer. The resulting address will be passed to <i>FreeList::addToFreeList</i>. In addition to this unprotected <i>m_encoded</i> value the <i>FreeListEntry</i> class, which inherits from <i>HeapObjectHeader</i> contains an inline <i>m_next</i> pointer which forms a singly linked list of free'd chunks. The <i>FreeListEntry::unlink</i> function is easily abused if the <i>m_next</i> pointer can be controlled via linear overwrite. More on this later. Lets briefly return to the <i>NormalPageArena</i> slow path.
+<br><br>
+The slow path, shown below starting in <i>NormalPageArena::outOfLineAllocate</i>, is heavily commented and mostly self explanitory. The allocator either returns a 'large object' if the size is big enough, or attempt to allocate from an existing free list. If the latter fails then Blink will attempt to iterate through all pages for a suitable freelist. If this fails then Blink will call the <i>coalesce</i> function which iterates through each page looking for chunks marked free'd so they can be combined. A call to <i>allocateFromFreeList</i> is made immediately after. If these efforts fail then a GC cycle is triggered, a new page is allocated, and a final attempt at calling <i>allocateFromFreeList</i> is made.
+<br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+// HeapPage.cpp
+Address NormalPageArena::outOfLineAllocate(size_t allocationSize, size_t gcInfoIndex)
+{
+    ASSERT(allocationSize > remainingAllocationSize());
+    ASSERT(allocationSize >= allocationGranularity);
+
+    // 1. If this allocation is big enough, allocate a large object.
+    if (allocationSize >= largeObjectSizeThreshold)
+        return allocateLargeObject(allocationSize, gcInfoIndex);
+
+    // 2. Try to allocate from a free list.
+    updateRemainingAllocationSize();
+    Address result = allocateFromFreeList(allocationSize, gcInfoIndex);
+    if (result)
+        return result;
+
+    // 3. Reset the allocation point.
+    setAllocationPoint(nullptr, 0);
+
+    // 4. Lazily sweep pages of this heap until we find a freed area for
+    // this allocation or we finish sweeping all pages of this heap.
+    result = lazySweep(allocationSize, gcInfoIndex);
+    if (result)
+        return result;
+
+    // 5. Coalesce promptly freed areas and then try to allocate from a free
+    // list.
+    if (coalesce()) {
+        result = allocateFromFreeList(allocationSize, gcInfoIndex);
+        if (result)
+            return result;
+    }
+
+    // 6. Complete sweeping.
+    getThreadState()->completeSweep();
+
+    // 7. Check if we should trigger a GC.
+    getThreadState()->scheduleGCIfNeeded();
+
+    // 8. Add a new page to this heap.
+    allocatePage();
+
+    // 9. Try to allocate from a free list. This allocation must succeed.
+    result = allocateFromFreeList(allocationSize, gcInfoIndex);
+    RELEASE_ASSERT(result);
+    return result;
+}
+</pre>
+<br>
+    The most interesting of these paths is perhaps <i>allocateFromFreeList</i>. A brief look at this function shows a for loop that attempts to allocate from the first <i>FreeListEntry</i> in each bucket that holds allocations bigger than <i>allocationSize</i>. If one is found the <i>unlink</i> function is called followed by a call to <i>setAllocationPoint</i> which sets the address previously unlinked, and then a call to <i>allocateObject</i> is made ensuring the chunk is returned.
+<br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+Address NormalPageArena::allocateFromFreeList(size_t allocationSize, size_t gcInfoIndex)
+{
+    // Try reusing a block from the largest bin. The underlying reasoning
+    // being that we want to amortize this slow allocation call by carving
+    // off as a large a free block as possible in one go; a block that will
+    // service this block and let following allocations be serviced quickly
+    // by bump allocation.
+    size_t bucketSize = static_cast<size_t>(1) << m_freeList.m_biggestFreeListIndex;
+    int index = m_freeList.m_biggestFreeListIndex;
+    for (; index > 0; --index, bucketSize >>= 1) {
+        FreeListEntry* entry = m_freeList.m_freeLists[index];
+        if (allocationSize > bucketSize) {
+            // Final bucket candidate; check initial entry if it is able
+            // to service this allocation. Do not perform a linear scan,
+            // as it is considered too costly.
+            if (!entry || entry->size() < allocationSize)
+                break;
+        }
+        if (entry) {
+            entry->unlink(&m_freeList.m_freeLists[index]);
+            setAllocationPoint(entry->getAddress(), entry->size());
+            ASSERT(hasCurrentAllocationArea());
+            ASSERT(remainingAllocationSize() >= allocationSize);
+            m_freeList.m_biggestFreeListIndex = index;
+            return allocateObject(allocationSize, gcInfoIndex);
+        }
+    }
+    m_freeList.m_biggestFreeListIndex = index;
+    return nullptr;
+}
+</pre>
+<br>
+    If we take a quick look at the <i>FreeListEntry</i> class we see it inherits from <i>HeapObjectHeader</i> and is basically a singly linked list with an unprotected next pointer that lives inline with user data.
+<br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+class FreeListEntry final : public HeapObjectHeader {
+public:
+    NO_SANITIZE_ADDRESS
+    explicit FreeListEntry(size_t size)
+        : HeapObjectHeader(size, gcInfoIndexForFreeListHeader)
+        , m_next(nullptr)
+    {
+#if ENABLE(ASSERT)
+        ASSERT(size >= sizeof(HeapObjectHeader));
+        zapMagic();
+#endif
+    }
+
+    Address getAddress() { return reinterpret_cast< Address>(this); }
+
+    NO_SANITIZE_ADDRESS
+    void unlink(FreeListEntry** prevNext)
+    {
+        *prevNext = m_next;
+        m_next = nullptr;
+    }
+
+    NO_SANITIZE_ADDRESS
+    void link(FreeListEntry** prevNext)
+    {
+        m_next = *prevNext;
+        *prevNext = this;
+    }
+
+    NO_SANITIZE_ADDRESS
+    FreeListEntry* next() const { return m_next; }
+
+    NO_SANITIZE_ADDRESS
+    void append(FreeListEntry* next)
+    {
+        ASSERT(!m_next);
+        m_next = next;
+    }
+
+private:
+    FreeListEntry* m_next;
+};
+</pre>
+<br>
+    The <i>addToFreeList</i> function confirms this is functionality. When the size of the free'd chunk is smaller than a <i>FreeListEntry</i> itself a <i>HeapObjectHeader</i> with the freelist bit set is constructed at the address. Otherwise a <i>FreeListEntry</i> structure is constructed at the address. This puts the <i>m_next</i> pointer at risk of a linear overwrite as well as the contents of the <i>HeapObjectHeader</i> bitfield.
+    <br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+void FreeList::addToFreeList(Address address, size_t size)
+{
+    ASSERT(size < blinkPagePayloadSize());
+    // The free list entries are only pointer aligned (but when we allocate
+    // from them we are 8 byte aligned due to the header size).
+    ASSERT(!((reinterpret_cast<uintptr_t>(address) + sizeof(HeapObjectHeader)) & allocationMask));
+    ASSERT(!(size & allocationMask));
+    ASAN_UNPOISON_MEMORY_REGION(address, size);
+    FreeListEntry* entry;
+    if (size < sizeof(*entry)) {
+        // Create a dummy header with only a size and freelist bit set.
+        ASSERT(size >= sizeof(HeapObjectHeader));
+        // Free list encode the size to mark the lost memory as freelist memory.
+        new (NotNull, address) HeapObjectHeader(size, gcInfoIndexForFreeListHeader);
+
+        ASAN_POISON_MEMORY_REGION(address, size);
+        // This memory gets lost. Sweeping can reclaim it.
+        return;
+    }
+    entry = new (NotNull, address) FreeListEntry(size);
+</pre>
+<br>
+    I've only briefly covered the slow path implemented by <i>NormalPageArena::outOfLineAllocate</i> but a few issues with its design are obvious. These inline meta-data values should be protected by a secret canary value that is checked before any operations are performed on both allocated and free'd chunks in this arena. I <a href="https://bugs.chromium.org/p/chromium/issues/detail?id=633030">reported these issues to Google</a> in August of 2016. <a href="https://twitter.com/fugueish">Chris Palmer</a> has done some <a href="https://codereview.chromium.org/2786843002">great</a> <a href="https://codereview.chromium.org/2698673003/">work</a> getting fixes into Chrome. These types of changes can have non-trivial performance implications, so they must be designed and implemented carefully. Besides the exposed inline meta-data, one of the simpler issues to fix is the lack of randomization in allocations from the freelist. <a href="https://struct.github.io/partition_alloc.html">I attempted to mitigate this particular issue</a> in PartitionAlloc in the past. Without this randomization the potential for linear overwrites targetting inline meta data is more predictable and thus more reliable.
+    <br><br>
+    While OilPan is missing a few mitigations such as meta data canaries, there are some protections such as guard page allocations on either side of the pages managed by<i>NormalPageArena</i>. And by its very nature of being a garbage collected heap, it is more difficult to perform <a href="http://www.blackhat.com/presentations/bh-europe-07/Sotirov/Presentation/bh-eu-07-sotirov-apr19.pdf">heap feng shui</a> techniques to create holes in the allocation patterns, and then allocate objects of our choosing at those addresses.
+      </p>
+      </section>
+      <footer>
+        <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
+      </footer>
+    </div>
+    <script src="javascripts/scale.fix.js"></script>
+              <script type="text/javascript">
+            var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+            document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+          </script>
+          <script type="text/javascript">
+            try {
+              var pageTracker = _gat._getTracker("UA-65842316-1");
+            pageTracker._trackPageview();
+            } catch(err) {}
+          </script>
+  </body>
+</html>
