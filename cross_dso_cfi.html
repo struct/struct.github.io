@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Root Cause</title>
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/github-light.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1><a href='http://struct.github.io'>Root Cause</a></h1>
+        <p></p>
+        <p class="view">
+        <a href="https://twitter.com/chrisrohlf">Twitter</a><br>
+        <a href="https://github.com/struct">GitHub</a><br>
+        <a href="https://www.linkedin.com/in/chrisrohlf">LinkedIn</a><br>
+        <a href="https://keybase.io/chrisrohlf">Keybase</a><br>
+        <a href="https://github.com/struct/research">Research</a><br>
+        <a href="resume.html">About</a><br>
+        <a href="mailto:chris.rohlf@gmail.com">Email</a>
+        </p>
+      </header>
+      <section>
+        <h2><div id='post0'>Cross DSO CFI - LLVM and Android</div></h2>
+        <p><script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+          January 1st, 2019<br>
+          Chris Rohlf<br><br>
+
+          Control Flow Integrity is an exploit mitigation that helps raise the cost of writing reliable exploits for memory safety vulnerabilities. There are various CFI schemes available today, and most are quite well documented and understood. One of the important areas where CFI can be improved is protecting indirect calls across DSO (Dynamic Shared Object) boundaries. This is a difficult problem to solve as only the library itself can validate call targets and consumers of the library may be compiled and linked against the library long after it was built. This requires a low level ABI compatability between the caller and the callee. The LLVM project has documented their design for this <a href="http://clang.llvm.org/docs/ControlFlowIntegrityDesign.html#shared-library-support">here</a>. The remainder of this post looks at that design, it's drawbacks, and then briefly explores how the Android PIE Bionic linker implements it.
+          <br><br>
+          There are generally two different types of CFI: forward edge which verifies the target of a control flow transfer such as a vtable pointer or function pointer, and backward edge which verifies the target of a return address. Protecting forward edge control flow transfers is done through a combination of 1) verifying the target address is a valid target within the binary and 2) the function signature of the target matches what was expected at link time. In fact all of LLVM's CFI protections assume everything is known about call targets at link time, and it takes advantage of Link Time Optimization in order to do this. But this assumption isn't true when linking against an existing DSO. To solve this the LLVM project <a href="http://clang.llvm.org/docs/ControlFlowIntegrityDesign.html#shared-library-support">designed</a> a cross-DSO CFI solution. The cross DSO solution relaxes the requirement to know all valid call targets at link time but the trade off is less fine grained protection. The design calls for the protected DSO to expose a symbol for a function with the following type signature:
+
+          <br><br><pre class="prettyprint" lang-html="cpp" style="border: 0;">
+  void __cfi_check(uint64 CallSiteTypeId, void *TargetAddr, void *DiagData)
+          </pre>
+
+          The arguments to this function are also defined in LLVM:
+          <br><br>
+
+          <i>CallSiteTypeId</i> is a hash of the target functions type signature. In the design this is specified as: obtain the mangled name for the function, hash it with MD5, slice off the first 64 bits as the <i>CallSiteTypeId</i>. You can see where in the <a href="https://github.com/llvm-mirror/clang/blob/google/stable/lib/CodeGen/CodeGenModule.cpp#L1159-L1164">LLVM CodeGen module</a> the type information is used to create the type id. We can easily recompute this in order to verify it. More on that below.
+          <br><br>
+          <i>TargetAddr</i> is the address we want to validate. This is either a function pointer or a C++ vtable pointer to a virtual function.
+          <br><br>
+          <i>DiagData</i> which is a pointer to an opaque blob of data for describing the error. I won't cover using it here.
+          <br><br>
+          Executables usually link against, and load multiple DSO's at runtime. Each DSO has to implement and expose this API, which means the executable linking against them has to know which implementation of <i>__cfi_check</i> to call before allowing a control flow transfer across a DSO boundary. A combination of <i>dlopen</i> and <i>dladdr</i> can be used to find the correct <i>__cfi_check</i>. But we can't use the linker to perform this lookup for every function call as it would have performance implications. The solution LLVM designed is what they refer to as a <a href="http://clang.llvm.org/docs/ControlFlowIntegrityDesign.html#cfi-shadow">CFI Shadow</a>. The LLVM documentation sums it up nicely:
+
+          <br><br>
+          <i><ul>To route CFI checks to the target DSO’s __cfi_check function, a mapping from possible virtual / indirect call targets to the corresponding __cfi_check functions is maintained. This mapping is implemented as a sparse array of 2 bytes for every possible page (4096 bytes) of memory. The table is kept readonly most of the time.</ul></i>
+          <br>
+          The Shadow is just a fast path for locating each DSO's <i>__cfi_check</i> implementation without having to rely on the linker iterating all shared objects for each cross DSO indirect call. The Shadow is lazily created the first time a DSO with CFI capabilities is loaded, and is updated whenever subsequent CFI capable DSO's are loaded or unloaded. Let's take a look at cross DSO CFI in practice on a standard Ubuntu 18.04 install. First <i>libtest.c</i>, the source code for our simple DSO:
+
+          <br><br><pre class="prettyprint" lang-html="cpp" style="border: 0;">
+  /* start libtest.c */
+  __attribute__((visibility("default"))) int foo() {
+    return 42;
+  }
+
+  __attribute__((visibility("default"))) void *alloc_memory(size_t sz) {
+    void *p = (void *) malloc(sz);
+    return p;
+  }
+  /* end libtest.c */
+
+  ## Emit LLVM IR so we can inspect it
+  $ clang -o libtest.llvm libtest.c -shared -fsanitize=cfi -fsanitize-cfi-cross-dso \
+    -flto -fvisibility=hidden -ggdb -S -emit-llvm
+
+  ## Compile the DSO
+  $ clang -o libtest.so libtest.c -shared -fsanitize=cfi -fsanitize-cfi-cross-dso \
+    -flto -fvisibility=hidden -ggdb
+          </pre>
+
+          After compiling the source above if we look at the <i>libtest.llvm</i> file we can see the <a href="https://llvm.org/docs/TypeMetadata.html">metadata</a> LLVM stores for the <i>alloc_memory</i> function.
+
+          <br><br><pre class="prettyprint" lang-html="cpp" style="border: 0;">
+  ; Function Attrs: noinline nounwind optnone uwtable
+  define i8* @alloc_memory(i64) #0 !dbg !20 !type !26 !type !27 !type !28 {
+    %2 = alloca i64, align 8
+    %3 = alloca i8*, align 8
+    store i64 %0, i64* %2, align 8
+    call void @llvm.dbg.declare(metadata i64* %2, metadata !29, metadata !DIExpression()), !dbg !30
+    call void @llvm.dbg.declare(metadata i8** %3, metadata !31, metadata !DIExpression()), !dbg !32
+    %4 = load i64, i64* %2, align 8, !dbg !33
+    %5 = call noalias i8* @malloc(i64 %4) #6, !dbg !34
+    store i8* %5, i8** %3, align 8, !dbg !32
+    %6 = load i8*, i8** %3, align 8, !dbg !35
+    ret i8* %6, !dbg !36
+  }
+  ...
+  !20 = distinct !DISubprogram(name: "alloc_memory", scope: !1, file: !1, line: 8, type: !21, isLocal: false, isDefinition: true, ...
+  !26 = !{i64 0, !"_ZTSFPvmE"}
+  !27 = !{i64 0, !"_ZTSFPvmE.generalized"}
+  !28 = !{i64 0, i64 6204334256397843919}
+          </pre>
+          All <a href="https://llvm.org/docs/LangRef.html#metadata">metadata in LLVM IR</a> is identified by an exclamation point. We are specifically interested in the metadata for the function signature found in metadata identifier 26. Let's demangle the name to find the original signature:
+
+          <br><br><pre class="prettyprint" lang-html="sh" style="border: 0;">
+  $ c++filt _ZTSFPvmE
+  typeinfo name for void* (unsigned long)
+        </pre>
+
+        The function signature above matches the signature we expect for the <i>alloc_memory</i> function. The <i>CallSiteTypeId</i> calculated for this function can be found in metadata identifier 28 as 6204334256397843919 (0x561a39225c617dcf). Let's look at the disassembled <i>__cfi_check</i> generated for this library.
+
+        <br><br><pre class="prettyprint" lang-html="asm" style="border: 0;">
+  0000000000002000 <__cfi_check>:
+   2000: 50                    push   %rax
+   2001: 48 b8 6b 35 3c 4e 8d  movabs $0xa6db38d4e3c356b,%rax    ; CallSiteTypeId for foo
+   2008: b3 6d 0a 
+   200b: 48 39 c7              cmp    %rax,%rdi
+   200e: 74 18                 je     2028 <__cfi_check+0x28>
+   2010: 48 b8 cf 7d 61 5c 22  movabs $0x561a39225c617dcf,%rax   ; CallSiteTypeId for alloc_memory
+   2017: 39 1a 56 
+   201a: 48 39 c7              cmp    %rax,%rdi
+   201d: 75 17                 jne    2036 <__cfi_check+0x36>
+   201f: 48 8d 05 22 00 00 00  lea    0x22(%rip),%rax        # 2048 alloc_memory
+   2026: eb 07                 jmp    202f <__cfi_check+0x2f>
+   2028: 48 8d 05 11 00 00 00  lea    0x11(%rip),%rax        # 2040 foo
+   202f: 48 39 c6              cmp    %rax,%rsi
+   2032: 75 02                 jne    2036 <__cfi_check+0x36>
+   2034: 58                    pop    %rax
+   2035: c3                    retq   
+   2036: 48 89 d7              mov    %rdx,%rdi
+   2039: e8 a2 f0 ff ff        callq  10e0 <__cfi_check_fail>
+   203e: 58                    pop    %rax
+   203f: c3                    retq   
+</pre><br>
+          Given the mangled function signature we can recompute the same <i>CallSiteTypeId</i> value in Ruby:
+          <br><br><pre class="prettyprint" lang-html="ruby" style="border: 0;">
+  irb> OpenSSL::Digest::MD5.digest("_ZTSFPvmE")[0,8].unpack('Q').first.to_s(16)
+  => "561a39225c617dcf"
+          </pre>
+
+          Here is the small C program that uses the <i>libtest.so</i>
+
+<br><br><pre class="prettyprint" lang-html="cpp" style="border: 0;">
+  int foo();
+  void *alloc_memory(size_t);
+
+  int main(int argc, char *argv[]) {
+
+    int (*foo_func_ptr)();
+    foo_func_ptr = &foo;
+    int ret = (*foo_func_ptr)();
+
+    void *(*alloc_memory_func_ptr)(size_t);
+    alloc_memory_func_ptr = &alloc_memory;
+    void *p = (*alloc_memory_func_ptr)(ret);
+
+    printf("Allocated %d bytes at %p\n", ret, p);
+
+    free(p);
+
+    return 0;
+  }
+
+  $ clang -o test test.c -L. -ltest -flto -fvisibility=hidden -fsanitize=cfi \
+     -fsanitize-cfi-cross-dso -ggdb -fpic -fpie
+          </pre>
+
+          If we disassemble the <i>test</i> program we should see how <i>__cfi_check</i> is invoked:
+          <br><br><pre class="prettyprint" lang-html="asm" style="border: 0;">
+  0000000000023dd0 <main.cfi>:
+    23dd0: 55                    push   %rbp
+    23dd1: 48 89 e5              mov    %rsp,%rbp
+    23dd4: 53                    push   %rbx
+    23dd5: 48 83 ec 38           sub    $0x38,%rsp
+    23dd9: 31 c0                 xor    %eax,%eax
+    23ddb: 48 8b 0d d6 e1 20 00  mov    0x20e1d6(%rip),%rcx      # 231fb8 foo
+    23de2: c7 45 d0 00 00 00 00  movl   $0x0,-0x30(%rbp)
+    23de9: 89 7d d4              mov    %edi,-0x2c(%rbp)
+    23dec: 48 89 75 c8           mov    %rsi,-0x38(%rbp)
+    23df0: 48 89 4d d8           mov    %rcx,-0x28(%rbp)
+    23df4: 48 8b 5d d8           mov    -0x28(%rbp),%rbx
+    23df8: a8 01                 test   $0x1,%al
+    23dfa: 75 12                 jne    23e0e main.cfi+0x3e
+    23dfc: 48 bf 6b 35 3c 4e 8d  movabs $0xa6db38d4e3c356b,%rdi
+    23e03: b3 6d 0a 
+    23e06: 48 89 de              mov    %rbx,%rsi
+    23e09: e8 22 09 fe ff        callq  4730 <__cfi_slowpath>   ; Call to __cfi_slowpath
+    23e0e: b0 00                 mov    $0x0,%al
+    23e10: ff d3                 callq  *%rbx
+    23e12: 31 c9                 xor    %ecx,%ecx
+    23e14: 48 8b 15 b5 e1 20 00  mov    0x20e1b5(%rip),%rdx      # 231fd0 alloc_memory
+          </pre>
+
+          Theres an interesting call here to <i>__cfi_slowpath</i> that we haven't seen yet. The LLVM <a href="http://clang.llvm.org/docs/ControlFlowIntegrityDesign.html#cfi-slowpath">documentation</a> describes its design. We can see the reference implementation in LLVM compiler-rt it references <a href="https://github.com/llvm-mirror/compiler-rt/blob/google/stable/lib/cfi/cfi.cc">here</a>. However the authors do not recommend using it.
+          <br><br>
+          <i><ul>...they have unresolvable issues with correctness and performance in the handling of dlopen()</ul></i>
+          <br>
+          I didn't dig too deeply for the reasons behind this but my quick analysis is that the LLVM compiler-rt implementation can only setup the shadow space after <i>dlopen</i> returns, which means the libraries constructors have already run. You may have already guessed we don't even need the compiler-rt runtime to use this functionality. We can invoke the <i>__cfi_check</i> manually using <i>dlopen</i>. Here is an example where we pass in the <i>CallSiteTypeId</i> on the command line:<br><br>
+
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+  /* begin cfi_check.c */
+  void *alloc_memory(size_t);
+  void __cfi_check(uint64_t CallSiteTypeId, void *TargetAddr, void *DiagData);
+
+  int main(int argc, char *argv[]) {
+    uint64_t call_site_type_id = strtoul(argv[1], NULL, 16);
+
+    void *(*alloc_memory_func_ptr)(size_t) = &alloc_memory;
+    void *so_handle = dlopen("libtest.so", RTLD_NOW);
+
+    void (*cfi_check_fptr)(uint64_t, void *, void *);
+    cfi_check_fptr = dlsym(so_handle, "__cfi_check");
+    printf("cfi_check is @ %p\n", cfi_check_fptr);
+    (*cfi_check_fptr)(call_site_type_id, alloc_memory_func_ptr, NULL);
+
+    void *chunk = (*alloc_memory_func_ptr)(1024);
+
+    printf("1024 bytes allocated @ %p\n", chunk);
+
+    free(chunk);
+
+    return 0;
+  }
+  /* end cfi_check.c */
+</pre>
+<br>
+<pre class="prettyprint" lang-html="sh" style="border: 0;">
+  $ clang -o cfi_check cfi_check.c -L. -ltest -ldl -fpie -fpic
+
+  # Pass in the correct CallSiteTypeId from our disassembly of libtest.so __cfi_check
+  $ LD_LIBRARY_PATH=. ./cfi_check 0x561a39225c617dcf
+  cfi_check is @ 0x7f5f36507000
+  1024 bytes allocated @ 0xb8f6b0
+
+  # Pass in a bad CallSiteTypeId
+  $ LD_LIBRARY_PATH=. ./cfi_check 0x0123456789abcdef
+  cfi_check is @ 0x7f3daca6e000
+  Illegal instruction (core dumped)
+</pre><br>
+          Using <i>__cfi_check</i> this way has the same issues the LLVM documentation describes and worse. It only runs after constructors are finished, and it has no fast lookup so it requires slow calls to <i>dlopen / dlsym</i>. This could be resolved through some simple caching mechanisms. This shows its conceptually possible to use a CFI enabled DSO even from an executable compiled without support for it.
+          <br><br>
+
+          Android's implementation of cross DSO CFI does not suffer from these drawbacks. The Android userspace runtime looks a lot different than a regular Linux system. This is most evident in <a href="https://en.wikipedia.org/wiki/Bionic_(software)">bionic</a>, a standard C library developed by Google. Bionic ships with its own dynamic runtime linker and it looks nothing like gnu-ld. For starters a lot of it is in C++ and doesn't suffer from 2 decades of portability cruft. Unlike glibc, the bionic code is clean and simple to follow. Android's implementation of cross DSO CFI can be found in the AOSP sources <a href="https://android.googlesource.com/platform/bionic/+/pie-release/linker/">here</a>. The API interfaces needed to expose the validation functions can be found in Bionic's libdl <a href="https://android.googlesource.com/platform/bionic/+/pie-release/libdl/libdl_cfi.cpp">here</a>. The <i>CFIShadowWriter</i> is responsible for most of the work required to maintain the CFI Shadow. We can see the initial allocation of the CFI Shadow in the <i>CFIShadowWriter::MapShadow</i> function which just uses <i>mmap</i> to allocate an anonymous region of memory with <i>PROT_READ</i> protections:
+          <br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+uintptr_t CFIShadowWriter::MapShadow() {
+  void* p =
+      mmap(nullptr, kShadowSize, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+  CHECK(p != MAP_FAILED);
+  return reinterpret_cast< uintptr_t>(p);
+}
+</pre><br>
+
+           The CFI Shadow has an important security property, it should only be marked writeable when its being updated at time of DSO load or unload. If it were to be writable for the lifetime of a process then it becomes an attractive target for overwrite. I initially wanted to explore how feasible arbitrary Shadow overwrites were as an exploit technique, but quickly realized in Bionic it was not possible. If we look at <i>linker_cfi.cpp</i> in Bionic we see the <i>ShadowWrite</i> class definition:
+          <br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+class ShadowWrite {
+  char* shadow_start;
+  char* shadow_end;
+  char* aligned_start;
+  char* aligned_end;
+  char* tmp_start;
+
+ public:
+  ShadowWrite(uint16_t* s, uint16_t* e) {
+    shadow_start = reinterpret_cast< char*>(s);
+    shadow_end = reinterpret_cast< char*>(e);
+    aligned_start = reinterpret_cast< char*>(PAGE_START(reinterpret_cast< uintptr_t>(shadow_start)));
+    aligned_end = reinterpret_cast< char*>(PAGE_END(reinterpret_cast< uintptr_t>(shadow_end)));
+    tmp_start =
+        reinterpret_cast< char*>(mmap(nullptr, aligned_end - aligned_start, PROT_READ | PROT_WRITE,
+                                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    CHECK(tmp_start != MAP_FAILED);
+    memcpy(tmp_start, aligned_start, shadow_start - aligned_start);
+    memcpy(tmp_start + (shadow_end - aligned_start), shadow_end, aligned_end - shadow_end);
+  }
+
+...
+
+  ~ShadowWrite() {
+    size_t size = aligned_end - aligned_start;
+    mprotect(tmp_start, size, PROT_READ);
+    void* res = mremap(tmp_start, size, size, MREMAP_MAYMOVE | MREMAP_FIXED,
+                       reinterpret_cast< void*>(aligned_start));
+    CHECK(res != MAP_FAILED);
+  }
+};
+</pre><br>
+          The class constructor allocates new memory to do the modification, and then remap it into the existing Shadow allocation in the destructor. The <i>CFIShadowWriter::Add</i> class method is one of the callers that takes advantage of this. It is responsible for writing the address of <i>__cfi_check</i> functions to the Shadow allocation for a new library. The LLVM compiler-rt library also uses this technique to maintain the protection of the Shadow allocation.
+          <br><br>
+
+          Bionic's cross DSO CFI is the only other userland implementation of LLVM's design outside of the compiler-rt library that I am aware of. Performing CFI checks across DSO boundaries loses some of the security properties of a more fine grained CFI but it's better than nothing. Support for this design in glibc/gnu-ld would be beneficial for Linux systems. Clearly the Android project is ahead of the game and even has <a href="https://android-developers.googleblog.com/2018/10/control-flow-integrity-in-android-kernel.html">enabled</a> cross DSO CFI for Kernel modules.
+        </p>
+      </section>
+      <footer>
+        <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
+      </footer>
+    </div>
+    <script src="javascripts/scale.fix.js"></script>
+              <script type="text/javascript">
+            var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+            document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+          </script>
+          <script type="text/javascript">
+            try {
+              var pageTracker = _gat._getTracker("UA-65842316-1");
+            pageTracker._trackPageview();
+            } catch(err) {}
+          </script>
+  </body>
+</html>

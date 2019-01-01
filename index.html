@@ -31,19 +31,22 @@
         Root Cause is a space to post articles about computation at scale, programming languages, security/cryptography, and esoteric memory safety vulnerabilities. My hope is that these posts will be preserved for future generations to study what primitive human beings once considered complex machines.</p><br>
 
         <b>Posts</b><br><br>
-        <h3><div id='post1'><a href="oilpan_metadata.html">Chrome Oilpan - Meta Data, Freelists and more</a></div></h3>
+        <h3><div id='post7'><a href="cross_dso_cfi.html">Cross DSO CFI - LLVM and Android</a></div></h3>
+        <p>January 1st, 2019 - I wanted to briefly explore cross DSO CFI implementations and whether targetting their fast path 'Shadow' allocations was possible as an exploitation technique (it's not).</p>
+        <br>
+        <h3><div id='post6'><a href="oilpan_metadata.html">Chrome Oilpan - Meta Data, Freelists and more</a></div></h3>
         <p>April 7th, 2017 - In this article I briefly cover the internals and some weaknesses of OilPan, Google's Garbage Collected heap for Chrome.</p>
         <br>
-        <h3><div id='post1'><a href="partition_alloc.html">Hardening PartitionAlloc</a></div></h3>
+        <h3><div id='post5'><a href="partition_alloc.html">Hardening PartitionAlloc</a></div></h3>
         <p>January 22, 2016 - In this article I dive into how PartitionAlloc works by first explaining its origins and how some of its basic allocation code paths work. I also introduce some basic hardening measures by randomizing the freelist and adding some basic double free protection.</p>
         <br>
-        <h3><div id='post1'><a href="pdfium_partitionalloc.html">Porting PartitionAlloc To PDFium</a></div></h3>
+        <h3><div id='post4'><a href="pdfium_partitionalloc.html">Porting PartitionAlloc To PDFium</a></div></h3>
         <p>September 9th, 2015 - In this brief article I explain how I ported the Chrome PDFium library to use the PartitionAlloc heap allocator. This brings the benefits of fine graned memory separation for objects allocated inside the PDFium code.</p>
         <br>
-        <h3><div id='post1'><a href="openssl.html">My heart is OK but my eyes are bleeding</a></div></h3>
+        <h3><div id='post3'><a href="openssl.html">My heart is OK but my eyes are bleeding</a></div></h3>
         <p>A quick look at the OpenSSL out of bounds read vulnerability from 2014. The internet went into panic mode and blamed the OpenSSL project for maintaining their own malloc. But this, like most things on the internet, was rooted in false assumptions.</p>
         <br>
-        <h3><div id='post1'><a href="glibc_house_of_mind.html">Glibc 2.11 and the House of Mind</a></div></h3>
+        <h3><div id='post2'><a href="glibc_house_of_mind.html">Glibc 2.11 and the House of Mind</a></div></h3>
         <p>Originally posted in 2010 on my first blog, this article explores how ptmalloc2 in glibc 2.11 attempted to stop the obscure House of Mind heap exploitation technique.</p>
         <br>
         <h3><div id='post1'><a href="webkit_css.html">WebKit CSS Type Confusion</a></div></h3>
