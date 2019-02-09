@@ -31,7 +31,8 @@
         <p>
         January 22, 2016<br>
         Chris Rohlf<br><br>
-        
+
+        Update 2/9/2019 - You can find HardenedPartitionAlloc <a href="https://github.com/struct/HardenedPartitionAlloc">here</a><br><br>
         In a <a href="http://struct.github.io/pdfium_partitionalloc.html">previous article</a> I ported an existing third party library in Chrome, PDFium, to use PartitionAlloc for a majority of its memory allocations. PartitionAlloc is the heap allocator in Chrome with built-in exploit mitigations. It substantially raises the bar for exploitation of use-after-free vulnerabilities in Chrome primarily through heap isolation. In this second article I will explore some of the implementation details of PartitionAlloc and introduce a patch I wrote to harden it further.
 
         <br><br>
