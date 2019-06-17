@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Root Cause</title>
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/github-light.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1><a href='http://struct.github.io'>Root Cause</a></h1>
+        <p></p>
+        <p class="view">
+        <a href="https://twitter.com/chrisrohlf">Twitter</a><br>
+        <a href="https://github.com/struct">GitHub</a><br>
+        <a href="https://www.linkedin.com/in/chrisrohlf">LinkedIn</a><br>
+        <a href="https://keybase.io/chrisrohlf">Keybase</a><br>
+        <a href="https://github.com/struct/research">Research</a><br>
+        <a href="resume.html">About</a><br>
+        <a href="mailto:chris.rohlf@gmail.com">Email</a>
+        </p>
+      </header>
+      <section>
+        <h2><div id='post0'>Bytes, Bombs and Spies - Review</div></h2>
+        <p><script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+          June 15th, 2019<br>
+          Chris Rohlf<br><br>
+          <i>This blog post originally appeared on <a href="https://cybersecpolitics.blogspot.com/2019/06/bytes-bombs-and-spies-guest-review.html">CyberSecPolitics</a> blog.</i>
+            <br><br>
+        After reading <a href="https://cybersecpolitics.blogspot.com/2019/02/review-bytes-bombs-and-spies.html">his book review</a> on <a href="https://www.amazon.com/Bytes-Bombs-Spies-Dimensions-Operations/dp/0815735472">‘Bytes, Bombs, and Spies’</a> Dave was kind enough to offer me a guest blog post to share my own thoughts. First I think it helps to understand what this book is. It’s not exactly another cyber research/policy book. It’s a look at ‘The strategic dimensions of offensive cyber operations’ through ‘a collection of essays’.
+        <br><br>
+        The reason I think this is important to note is because many of its authors contradict one another whether they intended to or not. Because this book is about offense I feel obligated to state the obvious. In offense the details matter. In fact they’re everything. It’s ‘you can write values k through kN but not beyond 258 bytes from the end of the struct, and the Nth position in your overwrite must have bits 1-4 set’ levels of accuracy or it just won’t work.
+        <br><br>
+        I tend to judge books like this based on how many new things I learned, not how many flaws I can find. In that regard this book is fantastic. Many of its authors are people I follow on Twitter and aggressively consume anything they write. They come from various academic, .mil, and .gov backgrounds. But there are also things in this book that give me cause for concern.
+         <br><br>
+        Anytime one of the book's essays ventures from abstract thinking into concrete implementation an experienced technical reader will cringe. Reading the terms ‘the {network, mail server}’ or ‘sysadmins’ makes me think the author did not sit down with an experienced SRE to understand how the cybers work in 2019. The way these simplistic architectures are described will make you nostalgic for a simpler time back when you were reading that 2001 CCNA exam prep guide. The internet in 2019 is comprised of massive platforms and ecosystems run by private companies. Find me a Fortune 500 outside the United States whose infrastructure doesn’t, in part, resolve to an AWS data center in Ashburn Virginia. Are there people who think a LAN of Win2k boxes with a single AD controller and an Exchange server is powering Gmail?
+        <br><br>
+        In the closing paragraphs of the ‘Second Acts In Cyberspace’ chapter Libicki makes the point that re-architecting is the only solution after a successful attack. Even organizations, public or private, that have the skills to build their own infrastructure build things that look nothing like it did 10 years ago. The platforms that power the modern internet are composed of hundreds of microservices. It’s likely that these design choices were specifically to meet the precise needs of global scale and cannot be “re-architected” without enormous effort. When DoD tackled Heartbleed they gave an award and a public nod to the team because the challenge was something like 8 million computing devices.
+        <br><br>
+        I was especially surprised by the ‘The Cartwright Conjecture’ chapter. I will read anything Jason Healy puts his name on but to me that theory fell apart entirely over the last few years.
+        <br><br>
+        <i>“We’ve got to talk about our offensive capabilities … to make them credible so that people know there’s a penalty for attacking the United States” - General James Cartwright</i>
+        <br><br>
+        I’ve never really bought into this concept as it assumes that the United States can deter cyber attacks by showcasing its own cyber capabilities. This line in particular “The bigger your hammer the less you have to swing it”. Did no one question what happens when your adversary takes your hammer and hits you in the face with it? Clearly a ‘stockpile’ of 0days and persistence tooling instills so much fear in our adversaries that they published it and then trolled people on Twitter. 
+        <br><br>
+        What groups such as the Shadow Brokers have done to the United States is what I have been advocating we should have been doing all along: publicly exposing the technical details of exploits and toolchains seen in the wild against American interests. That’s a ‘defend forward’ strategy I can get behind. Law enforcement does this to some degree but it's usually after you've been breached. The trolling bit, of course, is unnecessary. One of the things I found particularly interesting about this chapter was its mention of the United States having to co-opt or coerce, and weaponize technology companies in order to create fear in adversaries. Healy rightly points out the consequences of doing this. I’m not convinced this is needed at all. Our adversaries are likely already threatened by the fact their own operators have Gmail accounts or that they have to use operationally compromised systems in the US in order to reach Twitter. Doubling down on a free, secure, and open Internet is probably the best tool we will ever have.
+        <br><br>
+        This book is worth reading, and its authors deserve credit for exploring such a highly debated topic. What I think is lacking from most essays in this book is the understanding that we cannot have a strong offense without assuming some risk on others behalf. In 2019 every company is a technology company and if we are to get serious about defending an economy built on technology then we need to be honest with ourselves, it will come at the cost of a strategic offense.
+    <br><br>
+</p>
+      </section>
+      <footer>
+        <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
+      </footer>
+    </div>
+    <script src="javascripts/scale.fix.js"></script>
+              <script type="text/javascript">
+            var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+            document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+          </script>
+          <script type="text/javascript">
+            try {
+              var pageTracker = _gat._getTracker("UA-65842316-1");
+            pageTracker._trackPageview();
+            } catch(err) {}
+          </script>
+  </body>
+</html>
