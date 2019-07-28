@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Root Cause</title>
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/github-light.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1><a href='http://struct.github.io'>Root Cause</a></h1>
+        <p></p>
+        <p class="view">
+        <a href="https://twitter.com/chrisrohlf">Twitter</a><br>
+        <a href="https://github.com/struct">GitHub</a><br>
+        <a href="https://www.linkedin.com/in/chrisrohlf">LinkedIn</a><br>
+        <a href="https://keybase.io/chrisrohlf">Keybase</a><br>
+        <a href="https://github.com/struct/research">Research</a><br>
+        <a href="resume.html">About</a><br>
+        <a href="mailto:chris.rohlf@gmail.com">Email</a>
+        </p>
+      </header>
+      <section>
+        <h2><div id='post0'>Map Guard and Intel MPK</div></h2>
+        <p><script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+        July 27th, 2019<br>
+        Chris Rohlf<br><br>
+
+        Earlier this year I pushed a small library to Github called <a href="https://github.com/struct/mapguard">Map Guard</a>. The goal of Map Guard is to enforce non-invasive security policies with regards to how pages of memory may be allocated, or modified, with the <i>mmap</i> syscall. For example, we may want to deny any page allocations marked Read, Write, and Execute as it introduces an easy mechanism for an exploit developer to take advantage of. In the rest of this post I will break down the approach I took to implement each of these security policies, and finally how Map Guard uses Intel's Memory Protection Keys to allow transparently enabling Execute Only memory for all regions of mapped code.
+        <br><br>
+        <b>Map Guard</b>
+        <br><br>
+
+        Map Guard was designed as a small ELF DSO that gets loaded via <i>LD_PRELOAD</i> by your program and intercepts all calls to <i>mmap</i>, <i>munmap</i>, <i>mremap</i>, and <i>mprotect</i>. By hooking these page level APIs we can enforce security policies such as no-RWX, no static address allocation, guard page allocation, memory poisoning etc without ever modifying the source of the program we want to protect or analyze. Map Guard can be configured to do exactly these things just by modifying an environment variable. Below are Map Guard configurations that are currently supported and an explanation of their implementation:
+        <br><br>
+
+        MG_USE_MAPPING_CACHE - Enables the page mapping cache, an internal data structure used by Map Guard to track pages allocated by <i>mmap</i>. The mapping cache also tracks which protections these memory pages have had over time. Without this tracking data we couldn't implement other functionality such as guard pages or blocking <i>mprotect</i> calls that mark a page previously marked PROT_WRITE as PROT_EXEC.
+        <br><br>
+        MG_DISALLOW_RWX - Disallows memory allocations that are marked PROT_READ, PROT_WRITE, PROT_EXEC. This is acheived by hooking calls to <i>mmap</i> and <i>mprotect</i> and checking the protection bits set by the caller. Allowing your program to allocate pages of memory this way helps to reduce the effectiveness of W^X.
+        <br><br>
+        MG_DISALLOW_TRANSITION_TO_X - Disallows allocations marked PROT_READ, and PROT_WRITE to ever transition to PROT_EXEC. This is acheived by hooking <i>mprotect</i> and comparing the protection bits against the historical permission bits ever seen for that page.
+        <br><br>
+        MG_DISALLOW_TRANSITION_FROM_X - Disallows R-X allocations to ever transition to PROT_WRITE. This is achieved by hooking <i>mprotect</i> and comparing the protection bits against the historical permission bits ever seen for that page.
+        <br><br>
+        MG_DISALLOW_STATIC_ADDRESS - Disallows <i>mmap</i> based page allocations requested at a static address. This enforces ASLR by requiring only 0 is provided for the <i>addr</i> argument. When 0 is suppled for the <i>addr</i> argument the operating system will enforce ASLR and return a random page.
+        <br><br>
+        MG_ENABLE_GUARD_PAGES - Forces the allocation of both top and bottom guard pages. These guard pages are 1 page in size and are marked with PROT_NONE permissions. These are intended to catch out of bounds reads/writes from the mapping they surround. Unfortunately the allocation of these pages is best effort. Its possible that <i>mmap</i> returns a page with another mapping directly above or below it. In these cases guard page allocation will fail.
+        <br><br>
+        MG_PANIC_ON_VIOLATION - Instructs Map Guard to abort the process whenever any of its security policies are violated instead of just returning an error to the caller. This is only for the truly paranoid.
+        <br><br>
+        MG_POISON_ON_ALLOCATION - Instructs Map Guard to fill all allocated pages with a byte pattern <i>0xde</i>. This can be useful when trying to debug uninitialized memory bugs.
+        <br><br>
+
+        In order to enforce many of these policies Map Guard has to maintain a cache of what pages were allocated, and their permissions. This has the potential to introduce a small amount of performance overhead as the meta data needed to track the allocations is itself allocated with malloc, and a pointer to that data is stored in a global vector. That meta data tracks things such as the start address and size of the mapping, historical and current permissions, and the address of guard pages surrounding the mapping.
+        <br><br>
+        The policies enforced by Map Guard are quite trivial to implement. I wanted to add some additional features that allowed consumers of the library to build even more secure designs. I decided Intel's Memory Protection Keys were a good first choice, and a good opportunity to spend time with a new technology myself.
+        <br><br>
+
+        <b>Intel Memory Protection Keys (MPK)</b>
+        <br><br>
+        A few years ago Intel designed and released a new feature called <a href="https://lwn.net/Articles/643797/">Memory Protection Keys</a> into its Skylake processors. This <a href="http://man7.org/linux/man-pages/man7/pkeys.7.html">new</a> feature introduces a way to tag memory pages with a protection key in its page table entry with hardware support. This means user space programs can affect the read or write permissions on these pages a lot faster than using <i>mprotect</i>. This is accomplished by introducing a new user space register PKRU (Protection Key Rights Register), and 2 new instruction WRPKRU which writes to the register, and RDPKRU which reads from the register, and using 4 previously unused bits in a page table entry. The PKRU register is a new 32 bit register with 2 bits per process key, one bit for <i>PKEY_DISABLE_ACCESS</i> and one for <i>PKEY_DISABLE_WRITE</i>. The 4 bits in the PTE gives us 16 possible 'keys' per process, where 1 of these keys can be applied per page table entry. This allows us to create 16 different memory segmentations or groupings of pages. The pages in each group do not need to be contiguous either. This offers the potential for performant memory segmentation which can help reduce inadvertent memory disclosures and arbitrary code execution. Enforcing this type of segmentation with <i>mprotect</i> alone is slow, and doesn't allow for execute only memory.
+        <br><br>
+
+        Using the Linux MPK syscall API is trivial. In short all you need to do is call <i>pkey_alloc</i>, which returns your pkey, and then <i>pkey_mprotect</i> to tag a page table entry with that pkey. MPK permissions take precedence over normal page table entry permissions. You can temporarily change the access rights associated with a key using <i>pkey_set</i> or retrieve the access rights with <i>pkey_get</i>.
+        <br><br>
+
+        Because MPK relies on the PKRU user space register it is unique per PID/TID. MPK doesn't provide a lot of value between processes above and beyond what existing security mechanisms do but theres an interesting use case in threads. For certain program designs, mainly those that rely on worker threads to do untrusted operations, MPK gives us the ability to segment memory between them. When a worker thread first spawns it can use MPK to restrict its own future access to sensitive regions of memory. This is an effective way of limiting the damage that can be done with a memory disclosure, or making it harder to construct ROP payloads out of executable memory that won't be needed by that thread. However, once an attacker obtains arbitrary code execution in that thread the segmentation provided by MPK can be reversed. 
+        <br><br>
+
+        One of the interesting things about MPK is that it only affects data fetches, not instructions. Which means we can mark a page of memory <i>PKEY_DISABLE_ACCESS</i> but still retain its <i>PROT_EXEC</i> permissions effectively making the page Execute Only. Whats even better than using <i>pkey_mprotect</i> to create an execute only mapping? The Linux Kernel transparently doing it for you whenever you exclusively pass <i>PROT_EXEC</i> to <i>mprotect</i>. This optimization is not only a performance win but allows a simple change to existing code that calls <i>mprotect</i> to get the benefits of execute only memory by reducing the permissions requested. So JIT engines, like those commonly found in Javascript implementations and regex libraries, can mark dynamic code pages as execute only with no performance penalty. I created an API for this in Map Guard called <i>memcpy_xom</i>. Using this function is very simple
+        <br><br>
+        <pre class="prettyprint" lang-html="cpp" style="border: 0;">
+char *x86_nops_cc = "\x90\x90\x90\x90\xcc";
+void *ptr = memcpy_xom(4096, x86_nops_cc, strlen(x86_nops_cc));
+
+void*(*code_pointer)();
+code_pointer = (void *) ptr;
+
+/* This should trigger a breakpoint in your debugger */
+(code_pointer)();
+
+/* Should result in SEGV_PKUERR */
+int8_t *v = &ptr[2];
+        </pre>
+        The <i>protect_segments</i> API is an experimental way of marking all existing executable mappings executable only. It works by using a function exposed by the dynamic linker <i>dl_iterate_phdr</i> which executes a function callback for every loaded shared object currently in the process, including the main executable. This gives us the opportunity to inspect the ELF program headers for each loaded object and mark their associated mappings as executable only. The initial implementation in Map Guard that enables this is trivial:
+        <br><br>
+        <pre class="prettyprint" lang-html="cpp" style="border: 0;">
+/* Map Guard library implementation */
+static int32_t map_guard_protect_segments_callback(struct dl_phdr_info *info, size_t size, void *data) {
+    const char *object_name = "unknown_object";
+
+    if(strlen(info->dlpi_name) != 0) {
+        object_name = info->dlpi_name;
+    }
+
+    if(strlen(object_name) >= strlen("linux-vdso") && strncmp(object_name, "linux-vdso", 10) == 0) {
+        LOG("Skipping VDSO (%s)", object_name);
+        return 0;
+    }
+
+    void *load_address = (void *) info->dlpi_addr;
+    int32_t ret = OK;
+
+    for(uint32_t i = 0; i < info->dlpi_phnum; i++) {
+        if(info->dlpi_phdr[i].p_type == PT_LOAD && (info->dlpi_phdr[i].p_flags & PF_X)) {
+            ret |= g_real_mprotect(load_address, info->dlpi_phdr[i].p_memsz, (int32_t) data);
+        }
+    }
+
+    return ret;
+}
+
+int32_t protect_segments() {
+    return dl_iterate_phdr(map_guard_protect_code_callback, (void *) PROT_EXEC);
+}
+        </pre>
+        This requires the target library is properly compiled in such a way that the .text section, and the code within it, is the only thing found within that ELF segment. This introduces a requirement of modifying the linker script for the program you want to protect. This is not easy and may be confusing for many consumers of the library. So to make this feature more accessible I wrote an alternative API called <i><a href="https://github.com/struct/mapguard/commit/53a694567652eb454ce833c2929b00bf149f8b52#diff-ea3d146fceace75fc8472223ab7320beR256">protect_code()</i></a> which uses the same linker introspection technique but instead parses the ELF PT_DYNAMIC segment in order to find the symbol table. Using the symbol table entries we can approximate the start and end of the .text section. This is not a perfect heuristic but in practice it works pretty well and all you have to do to enable it is call a single function with no arguments. Below we can see the execute only sections of memory from a test program using the <i>protect_code</i> API.
+        <br><br>
+        <pre class="prettyprint" lang-html="sh" style="border: 0;">
+5627ac532000-5627ac533000 --xp 00003000 103:01 256531   /home/ubuntu/map_guard/build/mapguard_test
+7f6c1b087000-7f6c1b12f000 --xp 00022000 103:01 2079     /lib/x86_64-linux-gnu/libc-2.27.so
+7f6c1b457000-7f6c1b458000 --xp 00001000 103:01 2082     /lib/x86_64-linux-gnu/libdl-2.27.so
+7f6c1b65c000-7f6c1b65e000 --xp 00002000 103:01 256443   /home/ubuntu/map_guard/build/libmapguard.so
+7f6c1b86b000-7f6c1b86c000 --xp 0000a000 103:01 2075     /lib/x86_64-linux-gnu/ld-2.27.so
+</pre>
+<br>
+        Map Guard exposes MPK through other APIs such as <i>protect_mapping</i> which takes a single address as an argument. If Map Guard is already tracking those page allocations then the entire region will be marked inaccessible via <i>PKEY_DISABLE_ACCESS</i>. Calling <i>unprotect_mapping</i> will mark the region readable and writable again. Unfortunately managing pkeys is very error prone and full of corner cases that result in undefined behavior. The Map Guard MPK API will continue to evolve and improve in this regard. 
+        </p>
+      </section>
+      <footer>
+        <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
+      </footer>
+    </div>
+    <script src="javascripts/scale.fix.js"></script>
+              <script type="text/javascript">
+            var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+            document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+          </script>
+          <script type="text/javascript">
+            try {
+              var pageTracker = _gat._getTracker("UA-65842316-1");
+            pageTracker._trackPageview();
+            } catch(err) {}
+          </script>
+  </body>
+</html>
