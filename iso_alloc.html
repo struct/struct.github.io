@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Root Cause</title>
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/github-light.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1><a href='http://struct.github.io'>Root Cause</a></h1>
+        <p></p>
+        <p class="view">
+        <a href="https://twitter.com/chrisrohlf">Twitter</a><br>
+        <a href="https://github.com/struct">GitHub</a><br>
+        <a href="https://www.linkedin.com/in/chrisrohlf">LinkedIn</a><br>
+        <a href="https://github.com/struct/research">Research</a><br>
+        <a href="resume.html">About</a><br>
+        <a href="mailto:chris.rohlf@gmail.com">Email</a>
+        </p>
+      </header>
+      <section>
+        <h2><div id='post0'>Isolation Alloc</div></h2>
+        <p><script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+          March 8th, 2020<br>
+          Chris Rohlf<br><br>
+
+          The world needs more security focused memory allocators, so I decided to write one called <a href="https://github.com/struct/isoalloc/">Isolation Alloc</a>. The code is less than 1500 lines of C and is designed primarily for 64 bit Linux. In this post I will try to capture the design of IsoAlloc, its <a href="https://github.com/struct/isoalloc/blob/master/README.md#security-properties">security properties</a>, and the performance considerations I made along the way.
+          <br><br>
+          If you have ever spent time reading the source code of a memory allocator then you are no doubt familiar with byzantine doubly linked list code, arenas, slabs, buckets, hash tables, and free lists. Many of these terms change definition from one allocator to the next. Often the hardest part about learning how a new memory allocator works is mapping class and structure names to basic data structures and understanding what the allocator has in common with others like it. I wish I could say IsoAlloc is different but unfortunately it's not. What is different about IsoAlloc is its simplicity, and verbose documentation. IsoAlloc doesn't suffer from 20 years of refactoring, you should be able to navigate and understand the code within a couple of hours. I will start with a few basic structures that are core to understanding how IsoAlloc works.
+          <br><br>
+          <b>The Root</b>
+          <br><br>
+          IsoAlloc has one static global structure of type <i>iso_alloc_root</i> per process. This structure exists primarily to hold meta data about the zones it manages. A consumer of the library should never access the root structure directly and it is never purposefully exposed via the API.
+          <br><br>
+<pre class="prettyprint" lang-html="c" style="border: 0;">
+typedef struct {
+  uint32_t zones_used;             /* The number of zones used */
+  uint32_t system_page_size;       /* The system page size (e.g. 4096) */
+  void *guard_below;               /* A pointer to the guard page below this structure */
+  void *guard_above;               /* A pointer to the guard page above this structure */
+  uint64_t zone_handle_mask;       /* Mask for zone pointers returned by the API */
+  pthread_mutex_t zone_mutex;      /* A mutex to protect zone access */
+  iso_alloc_zone zones[MAX_ZONES]; /* IsoAlloc Zones (MAX_ZONES=8192) */
+} iso_alloc_root;
+</pre><br>
+            The root structure is independently allocated by <i>mmap</i> and bookended by guard pages. The <i>iso_alloc_protect_root</i> and <i>iso_alloc_unprotect_root</i> APIs can be called to temporarily disable and reenable access to the root and any zones. Pages holding user allocations will still be accessible but any attempt to use the API that results in referencing the root will result in a segfault. The <i>zone_handle_mask</i> member is used to mask zone handles that are returned to callers of APIs such as <i>iso_alloc_new_zone</i>. This subset of the API allows callers to create private zones, but each API call requires passing the zone handle to the allocator. The API interfaces transparently handle the masking and unmasking operations. This is to help obscure the location of the root and zone structures in memory even if the consumer of the library mistakenly discloses their location. The <i>zone_mutex</i> is a lock to ensure thread safe zone access.
+            <br><br>
+            <b>Zones</b>
+            <br><br>Zones are one of the most important concepts in IsoAlloc. There are a maximum of 8192 zones by default, but this is a somewhat arbitrary number. Incrementing it will result in a larger root structure, so only modify it if you find you are running out of memory. A contiguous array of zone meta data is held in the root structure, but only some are initialized at startup. A Zone represents and manages a region of memory that exists solely to hold objects of a specific size or type. This is core to the isolation strategy and is a core security property of IsoAlloc.
+            <br><br>
+            When IsoAlloc is initialized it creates default zones for common allocation sizes (in bytes): 32, 64, 128, 256, 512, 1024, 2048, 4096, and 8192. Zones for sizes larger than 8192 bytes are created on demand by IsoAlloc when these sizes are requested. In theory there is no limit to the size of chunks that a zone can manage but just like <i>malloc</i> you probably don't want to allocate hundreds of megabytes in the heap.
+            <br><br>
+            Meta data for each zone is stored in the root structure. This meta data contains pointers to both the user data the zone manages and the bitmap that is used to track which chunks in those user pages are in use and which are not. The pages of memory that back user allocations and the zone bitmap are allocated with <i>mmap</i> separately from one another and are both bookended by guard pages. The default size of all zones is 8mb regardless of the user size allocation they manage. This size was chosen because it should fit into most L2 CPU caches, as should the bitmap that manages it. It may even fit in the L1 cache depending on the processor and the size of the user chunks it manages as that determines how large of a bitmap is needed. Zones don't grow in size when they become full. Instead additional zones are created on demand when an existing zone becomes full. There is a performance penalty for creating new zones but once an internally managed zone is created it will exist for the lifetime of the process.
+            <br><br>
+  <pre class="prettyprint" lang-html="c" style="border: 0;">
+typedef struct {
+  size_t chunk_size;                    /* Size of chunks managed by this zone */
+  size_t bitmap_size;                   /* Size of the bitmap in bytes */
+  void *bitmap_start;                   /* Start of the bitmap */
+  void *bitmap_end;                     /* End of the bitmap */
+  void *bitmap_pages_guard_below;       /* Bitmap pages guard below */
+  void *bitmap_pages_guard_above;       /* Bitmap pages guard above */
+  void *user_pages_start;               /* Start of the pages backing this zone */
+  void *user_pages_end;                 /* End of the pages backing this zone */
+  void *user_pages_guard_below;         /* User pages guard below */
+  void *user_pages_guard_above;         /* User pages guard below */
+  int64_t free_bit_slot_cache[255];     /* A cache of bit slots that point to freed chunks */
+  int32_t free_bit_slot_cache_index;    /* Tracks how many entries in the cache are filled */
+  int32_t free_bit_slot_cache_usable;   /* The oldest members of the free cache are served first */
+  int64_t next_free_bit_slot;           /* The last bit slot returned by get_random_free_bit_slot */
+  int32_t index;                        /* Zone index */
+  uint64_t canary_secret;               /* Each zone has its own canary secret */
+  uint64_t pointer_mask;                /* Each zone has its own pointer protection secret */
+  bool internally_managed;              /* Zones can be managed by iso_alloc or custom */
+  bool is_full;                         /* Indicates whether this zone is full to avoid expensive free bit slot searches */
+} iso_alloc_zone;
+  </pre>
+            There are a number of interesting and security relevant fields shown above. When a zone is created to hold chunks 8192 bytes or smaller about %1 of its chunks will be canary chunks. These canary chunks have a secret value written to them at the top and bottom of the chunk and are checked in various code paths. Any chunk that is passed to <i>iso_free</i> will have the canaries of any adjacent canary chunks verified, and then a canary value written to both its own top and bottom dwords. These canaries are verified before the chunk is handed back to a caller via <i>iso_alloc</i>. Put in other words, any chunk that becomes allocated, and then free'd becomes a canary until it is allocated again. Consumers of the library can also use the API to force checking of these canaries. For example, the API exposes 2 functions <i>iso_verify_zones</i> and <i>iso_verify_zone(zone)</i> which allow the caller to verify all canaries in all zones or a specific zone.
+            <br><br>
+            Most memory allocators refer to a 'fast path' which will be called often when a consumer of the library requests new memory. This code path should not contain any unnecessary processing that could slow the allocator down. Most fast path implementations use a singly linked list to track free chunks (i.e. the free list) or some other fast way of tracking free chunks that can be returned to the caller without additional work. Each zone has a <i>free_bit_slot_cache</i>, this cache is the basis for our free list optimization. It allows us to quickly allocate new chunks without having to search a zones entire bitmap again. It holds up to 255 currently free bit slots for the allocation hot path to choose from.
+            <br><br>
+            The cache is not completely randomized at creation because the performance penalty is too high. But populating the cache is done by selecting a random index into the bitmap where we can start looking for free bit slots. Free entries from the cache are returned to the allocation hot path by starting from the bottom of the cache and working towards the top. When chunks are free'd they may be added to the end of the cache if there is room. If this occurs they will be the last to be returned to <i>iso_alloc</i>. In most cases free'd chunks won't be available for allocation again until the cache is refreshed. This is a security property that ensures some number of allocations must happen before a recently free'd chunk is reused. This is similar to 'delayed free' strategies employed by more sophisticated memory allocators found in web browsers.
+            <br><br>
+            Targeting zone meta data may allow an attacker to control the contents of arbitrary chunks of memory. In order to make this more difficult the <i>pointer_mask</i> field is unique per zone and is used to obfuscate the <i>bitmap_*</i> and <i>user_pages_*</i> pointers when the zone is not being used. This is not a fool proof defense as an arbitrary read can retrieve the mask value but it does introduce that additional constraint before any arbitrary write primitive can be used against this meta data.
+            <br><br>
+            <b>Zone Bitmaps</b>
+            <br><br>
+            As mentioned earlier zone bitmaps are allocated with <i>mmap</i> and are bookended by guard pages. Because these pages will be accessed often and in sequential order we utilize the <i>madvise</i> syscall and use the <i>MADV_WILLNEED</i> and <i>MADV_SEQUENTIAL</i> flags. Both of these flags tell the kernel it may want to read ahead a few pages in order to speed up access.
+            <br><br>
+            All user chunks are managed by a bitmap. The bitmap holds 2 bits per user chunk. These 2 bits constitute what we refer to as a bit slot and they maintain state for every chunk managed by the zone. To calculate the size of our bitmap we just need to take the size of the zone (8mb by default), divide that by the size of chunks it manages (e.g. 64 bytes). For example a zone for holding 64 byte allocations: 
+            <br>
+            <br>(8388608 (zone size) / 64 (allocation size)) = 131072 total allocations
+            <br>131072 * 2 (bits per allocation) = 262144 total bits needed
+            <br>262144 / 8 (bits per byte) = 32768 bytes
+            <br>32768 / 4096 (page size) = 8 page bitmap required
+            <br><br>
+            The bitmap operations in IsoAlloc are very simple. Because our bit slots are 2 bits we have 2^2=4 possible combinations of state that a bit slot can hold for each chunk. The current states a chunk can be in are as follows:
+
+            <br><br><ul>
+                <li>00 free chunk, never used</li>
+                <li>10 currently in use</li>
+                <li>01 was used but is now free</li>
+                <li>11 canary chunk or permanently free'd</li>
+            </ul><br>
+
+            The state of each bit can be interpreted differently depending on which part of the allocator is executing. For example, theres no difference between a currently in use chunk that was previously free'd (11) and a canary chunk (11). So in order to account for this we flip the second bit to 0 whenever a chunk is currently allocated and flip it back to 1 upon <i>iso_free</i>.
+            Storing information about user chunks this way is efficient and eliminates the need for complex linked lists that are often the target of arbitrary write vulnerabilities. We use the <i>free_bit_slot_cache</i> to speed up the process of allocation and defer bitmap searching to only when the cache is depleted or we want to verify the state of heap or detect memory leaks.
+            <br><br>
+            <b>Zone User Pages</b>
+            <br><br>
+            User pages are also allocated with <i>mmap</i>. We don't maintain a pointer to every chunk in these pages because its easier to just calculate that value as needed based on the bit slot returned by our bitmap. We use a macro <i>POINTER_FROM_BITSLOT</i> to quickly calculate pointers to user chunks based on the zone and the bit slot:
+            <br><br>
+            <pre class="prettyprint" lang-html="c" style="border: 0;">
+#define POINTER_FROM_BITSLOT(zone, bit_slot) \
+    ((void *) zone->user_pages_start + ((bit_slot / BITS_PER_CHUNK) * zone->chunk_size));
+            </pre>
+
+            All user page allocations are bookended by guard pages. At creation time we use the <i>madvise</i> syscall and pass the <i>MADV_RANDOM</i> which tells the kernel we do not expect these pages to be read in order. This is because we can't possibly know how a consumer of IsoAlloc will behave.
+            <br><br>
+            Because of the IsoAlloc design it is easy to guarantee that all allocations will be 8 byte aligned. This has advantages beyond just performance such as being able to detect if an unaligned pointer is passed to <i>iso_free</i> or if the pointer is not a multiple of the chunk size the zone manages.
+            <br><br>
+            <pre class="prettyprint" lang-html="c" style="border: 0;">
+$ cat tests/incorrect_chunk_size_multiple.c 
+#include "iso_alloc.h"
+#include "iso_alloc_internal.h"
+
+int main(int argc, char *argv[]) {
+    int64_t *p = (int64_t *) iso_alloc(128);
+    p += 8;
+    iso_free(p);
+    return OK;
+}
+</pre>
+<br>
+<pre>
+$ LD_LIBRARY_PATH=build/ build/incorrect_chunk_size_multiple 
+[ABORTING][23942](iso_free_chunk_from_zone) Chunk at 0x7f178dcd1040 is not a multiple of zone[3] chunk size 128. Off by 64 bits
+Aborted
+</pre>
+<br>
+            The example above shows how us allocating a 128 byte chunk of memory, incrementing our pointer by 8 and then passing the pointer to <i>iso_free</i>. The allocator aborts because it knows this pointer couldn't possibly point to properly aligned chunk in a zone meant to manage 128 byte chunks.
+            <br><br>
+            <b>API</b>
+            <br><br>
+            In this post I won't cover how to use each API exposed by IsoAlloc, please refer to the <a href="https://github.com/struct/isoalloc/blob/master/README.md">README</a> for the most up to date version of those interfaces. Instead I want to cover some of the more interesting aspects of the API. As a consumer of a memory allocator you often want to ask the library about the current state of the heap or call an API that makes it easier to track down a bug in your code. Building these capabilities into IsoAlloc was a priority from the start.
+            <br><br>
+            When working in C/C++ code its easy to write subtle bugs. Many times these bugs only manifest themselves under certain conditions that can be hard to recreate. While it's not practical to verify the state of the heap or check for leaks on every allocation or free we can expose APIs to perform these actions so that they may be called at critical times or from tests that exercise complex code paths or handle state. IsoAlloc exposes API calls to assist in program development such as detecting memory leaks (<i>iso_alloc_detect_leaks</i>), and verifying the heap state (<i>iso_verify_zones</i>).
+            <br><br>
+            These are useful in defensive programming designs where performance is not the first priority but they can also be used during fuzzing or test development. Here is a very simple example of overflowing a chunk returned by <i>iso_alloc</i> and then using the <i>iso_verify_zones</i> API which will detect an overwritten canary value and abort the process. 
+            <br><br>
+<pre class="prettyprint" lang-html="c" style="border: 0;">
+$ cat tests/heap_overflow.c 
+#include "iso_alloc.h"
+#include "iso_alloc_internal.h"
+
+int main(int argc, char *argv[]) {
+    int64_t *p = (int64_t *) iso_alloc(32); /* Allocate a 32 byte buffer */
+    memset(p, 0x42, 32768);                 /* Overflow the bounds of the buffer */
+    iso_verify_zones();                     /* Ask IsoAlloc to verify state of all zones */
+    iso_free(p);                            /* Free the chunk, never reached */
+    return OK;
+}
+</pre>
+<br>
+<pre>
+$ LD_LIBRARY_PATH=build/ build/heap_overflow 
+[ABORTING][23737](check_canary) Canary at beginning of chunk 0x7f5a7183f000 in zone[1] has been corrupted! Value: 0x4242424242424242 Expected: 0x2f8b54c2b9b50a87
+Aborted
+</pre>
+            <br>
+                It can be helpful to detect memory leaks in the destructor of an object or before a component of a program shuts down. IsoAlloc exposes an API call <i>iso_alloc_detect_leaks</i> that scans the bitmap for a zone and looks for in-use chunks by checking the value of the second bit in each bit slot.
+<pre class="prettyprint" lang-html="c" style="border: 0;">
+$ cat tests/leaks_test.c 
+#include "iso_alloc.h"
+#include "iso_alloc_internal.h"
+
+int main(int argc, char *argv[]) {
+    void *p = NULL;
+
+    for(int32_t i = 0; i < 16; i++) {
+        p = iso_alloc(i * i);
+
+        /* Free a single chunk */
+        if(i == 1) {
+            iso_free(p);
+        }
+    }
+
+    int32_t r = iso_alloc_detect_leaks();
+
+    LOG("Total leaks detected: %d", r);
+
+    return r;
+}
+</pre>
+<br>
+<pre>
+$ LD_LIBRARY_PATH=build/ build/leaks_test                    
+...
+[LOG][24246](_iso_alloc_zone_leak_detector) Leaked chunk of 32 bytes detected in zone[1] at 0x7f7ef0eaa020 (bit position = 89090)
+...
+[LOG][24246](main) Total leaks detected: 15
+[LOG][24246](_iso_alloc_zone_leak_detector) Leaked chunk of 16 bytes detected in zone[0] at 0x7f7ef1649010 (bit position = 127490)
+...
+[LOG][24246](_iso_alloc_zone_leak_detector) Zone[0] Total number of 16 byte chunks(524288) used and free'd (1) (%0)
+[LOG][24246](_iso_alloc_zone_mem_usage) Zone[0] (16 byte chunks) Total bytes(8519680) megabytes(8)
+[LOG][24246](_iso_alloc_zone_leak_detector) Leaked chunk of 32 bytes detected in zone[1] at 0x7f7ef0eaa020 (bit position = 89090)
+[LOG][24246](_iso_alloc_zone_leak_detector) Zone[1] Total number of 32 byte chunks(262144) used and free'd (0) (%0)
+</pre>
+            <br>
+            The cropped log above shows how the memory leak detector API works. It does not perform any stack or object reference scanning so it can't detect dangling pointers, but because it only requires scanning a small bit map it is quite performant.
+            <br><br>
+            <b>Memory Safety</b>
+            <br><br>
+            The <i>tests/</i> directory in the IsoAlloc release contains a few more examples like the heap_overflow example above that demonstrate how the library detects common vulnerable patterns similar to this such as heap underflows, double free's, and incorrect free's. Some of these patterns are easy to detect because of the IsoAlloc design. For example, detecting double free's is as easy as retrieving the current state of the bits for a bit slot that is about to be free'd. As noted earlier, chunks designated as canaries have the secret values at the top and bottom of their chunks verified whenever an adjacent chunk is free'd or when they themselves are about to be reallocated. Other basic security features include wiping chunk contents on free, and the alignment checks discussed earlier.
+            <br><br>
+            Another unique API call exposed by IsoAlloc is <i>iso_free_permanently</i> which allows a caller to free a chunk in such a way that it becomes marked as a canary and is guaranteed to not ever be returned by <i>iso_alloc</i> in the future. The canaries placed at the top and bottom of this chunk will be verified like any other canary as described earlier.
+            <br><br>
+            <b>Conclusion</b>
+            <br><br>
+            Unfortunately I could not cover every aspect of IsoAlloc in this post. For the most update to date information on the API and the <a href="https://github.com/struct/isoalloc/blob/master/README.md#security-properties">security properties</a> of IsoAlloc the <a href="https://github.com/struct/isoalloc/blob/master/README.md">README</a> is the best source of information.
+            <br><br>  
+            With support for all common operations (<i>malloc, free, realloc, calloc, strdup, strndup</i> etc) IsoAlloc is an excellent drop-in replacement for <i>malloc</i> and <i>free</i>. Most mature programs and libraries have wrappers around these calls and so swapping them to their IsoAlloc equivalent is trivial. While IsoAlloc has some support for overloading these libc functions via <i>MALLOC_HOOK</i> I do not recommend using it.
+        </p>
+      </section>
+      <footer>
+        <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
+      </footer>
+    </div>
+    <script src="javascripts/scale.fix.js"></script>
+              <script type="text/javascript">
+            var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+            document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+          </script>
+          <script type="text/javascript">
+            try {
+              var pageTracker = _gat._getTracker("UA-65842316-1");
+            pageTracker._trackPageview();
+            } catch(err) {}
+          </script>
+  </body>
+</html>
