@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Root Cause</title>
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/github-light.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1><a href='http://struct.github.io'>Root Cause</a></h1>
+        <p></p>
+        <p class="view">
+        <a href="https://twitter.com/chrisrohlf"><img height="32" width="32" src="icons/twitter.svg" /></a>&nbsp;
+        <a href="https://github.com/struct"><img height="32" width="32" src="icons/github.svg" /></a>&nbsp;
+        <a href="https://www.linkedin.com/in/chrisrohlf"><img height="32" width="32" src="icons/linkedin.svg" /></a>&nbsp;
+        <a href="mailto:chris dot rohlf _at_ gmail.com"><img height="32" width="32" src="icons/gmail.svg" /></a>
+        </p>
+      </header>
+      <section>
+        <h2><div id='post0'>IsoAlloc - Uninitialized Read Detection</div></h2>
+        <p><script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+        April 3rd, 2021<br>
+        Chris Rohlf<br><br>
+
+        Uninitialized memory vulnerabilities are a class of memory safety issues that have plagued C/C++ developers for decades. The most concise description of this vulnerability class is when you allocate and use memory without first properly clearing that memory of the contents that was written there previously. A simple code snippet that shows this pattern is below:
+        <br><br>
+  <pre class="prettyprint" lang-html="cpp" style="border: 0;">
+  some_struct_t *sq = (some_struct_t *) malloc(32);
+  isAuthorized(sq->authFlag);
+  </pre>
+        This code never made a call to <i>memset</i> to clear the memory returned by malloc before using it. There is no guarantee that the backing page is not dirty from a previous write, as is often the case when memory is free'd and the chunk handed out to a new caller. These bugs are notorious to find because they don't immediately result in a signal being sent to the process. Finding them used to require heavy handed approaches like dynamic code instrumentation, and the 'PROT_NONE + SIGSEGV' trick. The latter is a bit of a hack and requires setting a pages permissions to PROT_NONE using <i>mprotect</i> and then setting up a signal handler to catch accesses to that page. The problem with this approach is it also catches writes to the page so its insufficient for detecting uninitialized reads except in very limited circumstances. The fine grained data we need related to the page fault just isn't accessible anywhere except in the kernel which means we need to write a kernel module if we want access to the information.
+        <br><br>
+        Eventually <a href="https://clang.llvm.org/docs/MemorySanitizer.html">Memory Sanitizer</a> arrived which brought fast-ish compiler based code instrumentation for detecting these kinds of errors. MSan works similar to Address Sanitizer by using shadow memory and compiler added code instrumentation. MSan is incredibly powerful and effective, but it comes at the cost of a 3x performance overhead which makes it not suitable for production builds except in rare circumstances. Many organizations currently deploy canary builds with ASAN/MSAN enabled to sample production traffic but this is still only useful in highly orchestrated backend service deployments.
+        <br><br>
+        A few years ago a new syscall appeared in the Linux kernel named <a href="https://www.kernel.org/doc/Documentation/vm/userfaultfd.txt">userfaultfd</a>. This syscall allowed for a basic page fault handler to be implemented in user space. It allows for <a href="https://www.kernel.org/doc/html/latest/admin-guide/mm/userfaultfd.html">very powerful features</a> such as hooking events for remapping of pages, forked child processes, <a href="https://medium.com/@MartinCracauer/generational-garbage-collection-write-barriers-write-protection-and-userfaultfd-2-8b0e796b8f7f">garbage collection features</a>, and writing out of process page fault handlers for specific operations. The <a href="https://man7.org/linux/man-pages/man2/userfaultfd.2.html">API</a> to this syscall is used via a combination of calls syscall/read/poll/<a href="https://man7.org/linux/man-pages/man2/ioctl_userfaultfd.2.html">ioctl</a> and is very <a href="https://blog.lizzie.io/using-userfaultfd.html">complicated and difficult</a> to use, but we can use it to register a range of page addresses with the kernel and then process an event in a special thread whenever a page fault occurs anywhere in that range. These <a href="https://github.com/torvalds/linux/blob/b537900f1598b67bcb8acac20da73c6e26ebbf99/fs/userfaultfd.c#L190-L220">events</a> also tell us whether the page fault was the result of a read or a write. This is enough information for us to build a simple mechanism for detection of uninitialized reads in userspace with minimal performance overhead. Using these building blocks I developed this optional feature in <a href="https://github.com/struct/isoalloc">IsoAlloc</a>.
+        <br><br>
+        It works by first spawning a special thread to handle userfaultfd events, and then sampling calls to <i>iso_alloc / malloc</i>. These sampled calls are handled by first allocating a raw page to back the request, registers that pages with userfaultfd, returns the page to the caller, and then handling pagefault events from the kernel for that address range. If the first event seen for the page is a write we remove it from the list of pages we are tracking, if it's a read then we know its an uninitialized read or it wouldn't be on the list. Below we see this feature detecting an uninitialized read in our test program.
+        <br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+$ cat tests/uninit_read.c 
+/* iso_alloc uninit_read.c
+ * Copyright 2021 - chris.rohlf@gmail.com */
+
+#include "iso_alloc.h"
+#include "iso_alloc_internal.h"
+
+int main(int argc, char *argv[]) {
+    while(1) {
+        uint8_t *p = iso_alloc(1024);
+        uint8_t drf = p[128];
+        p[256] = drf;
+        iso_free(p);
+    }
+
+    return OK;
+}
+
+$ LD_LIBRARY_PATH=build/ build/uninit_read 
+[ABORTING][86027](src/iso_alloc_sanity.c:78 _page_fault_thread_handler()) Uninitialized read detected on page 7fb6ce3cf000 (1024 byte allocation)
+Aborted (core dumped)
+</pre>
+<br>
+        There are some limitations to this approach. For starters its only available on specific versions of the Linux kernel. A majority of my testing was performed on AWS free tier with a 5.4.0 kernel, but it should work as far back as 4.11. Not all uninitialized read vulnerabilities will be detected with this technique, a caller could request 1024 byte allocation, clear the first 32 bytes with <i>memset()</i> and then access the 512th byte without initializing it. We wouldn't detect this because the page would have been removed from our tracking when those first 32 bytes were initialized. This is because userfaultfd only notifies us of page level information not individual memory addresses within the page. But given that we are sampling smaller calls to malloc, this is likely not a common case.
+        <br><br>
+        While the current implementation needs some work it is effective at detecting these kinds of vulnerabilities. The goal is to have a feature similar to <a href="https://sites.google.com/a/chromium.org/dev/Home/chromium-security/articles/gwp-asan">GWP-ASAN</a> but for uninitialized reads. It should be suitable for production given its <a href="http://xzpeter.org/userfaultfd-wp-latency-measurements/">low performance overhead</a>, especially when only sampling calls to <i>malloc</i>. It's available in the IsoAlloc code today along with a basic GWP-ASAN like feature for detecting Use-After-Free and other vulnerabilities in production code. Like <a href="https://github.com/struct/isoalloc">IsoAlloc</a> itself, all of these features are under active development.
+        <br><br>
+</p>
+      </section>
+      <footer>
+        <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
+      </footer>
+    </div>
+    <script src="javascripts/scale.fix.js"></script>
+              <script type="text/javascript">
+            var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+            document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+          </script>
+          <script type="text/javascript">
+            try {
+              var pageTracker = _gat._getTracker("UA-65842316-1");
+            pageTracker._trackPageview();
+            } catch(err) {}
+          </script>
+  </body>
+</html>
