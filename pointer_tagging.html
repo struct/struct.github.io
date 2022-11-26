@@ -162,7 +162,7 @@
           <b>Example Usage</b>
           <br><br>
 
-          Using these primitive operations we can build a simple C++ smart pointer template that transparently tags, untags, and dereferences a tagged pointer. Below is an example IsoAllocPtr template. It's constructor takes a private zone handle, and an existing pointer to a chunk allocated from that zone, which it tags and stores as a member variable. It overloads a dereference operator so it can transparently untag and dereference the pointer.
+          Using these primitive operations we can build a simple C++ smart pointer template that transparently tags, untags, and dereferences a tagged pointer. Below is an example IsoAllocPtr template. It's constructor takes a private zone handle, and an existing pointer to a chunk allocated from that zone, which it tags and stores as a member variable. It overloads a dereference operator so it can transparently untag and dereference the pointer. For TBI capable systems the <i>iso_alloc_verify_ptr_tag</i> function will verify the tag, and abort if it is incorrect. It does not strip the tag like <i>iso_alloc_untag_ptr</i> does.
           <br><br>
 <pre class="prettyprint" lang-html="cpp" style="border: 0;">
         template &lt;typename T&gt;
@@ -196,6 +196,9 @@ void *iso_alloc_untag_ptr(void *p, iso_alloc_zone_handle *zone)
 
 // Retrieves the 1 byte tag for an untagged pointer
 uint8_t iso_alloc_get_mem_tag(void *p, iso_alloc_zone_handle *zone)
+
+// Verifies the tag on a tagged pointer, aborts if incorrect
+void iso_alloc_verify_ptr_tag(void *p, iso_alloc_zone_handle *zone)
 </pre>
 <br>
           You can find the IsoAlloc memory tagging unit tests for <a href="https://github.com/struct/isoalloc/blob/master/tests/tagged_ptr_test.cpp">C++</a>, <a href="https://github.com/struct/isoalloc/blob/master/tests/tagged_ptr_test.c">C</a>, and <a href="https://github.com/struct/isoalloc/blob/master/tests/bad_tag_ptr_test.c">invariants</a>.
