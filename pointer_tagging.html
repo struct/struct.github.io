@@ -34,7 +34,7 @@
           <br><br>
           ARM MTE is a hardware based solution for detecting both spatial and temporal memory safety issues in software with little to no overhead. It works by using the Top Byte Ignore (TBI) feature to transparently tag pointers with metadata or a 'tag'. With MTE this tag is transparently added, verified, and removed from pointers in hardware. MTE errors can be configured to be delivered synchronously or asynchronously.
           <br><br>
-          Pointer tagging as implemented here in IsoAlloc is conceptually very similar, except these operations are implemented in software. There are of course limitations to the IsoAlloc implementation such as performance overhead and less flexibility in how errors are delivered in comparison to MTE.
+          Pointer tagging as implemented here in IsoAlloc is conceptually very similar, except these operations are implemented in software. There are of course limitations to the IsoAlloc implementation such as performance overhead and less flexibility in how errors are delivered in comparison to MTE. But it is a usable software alternative for systems without TBI or MTE like x86_64.
 
           <br><br>
           <b>Memory Allocator Support</b>
@@ -162,7 +162,7 @@
           <b>Example Usage</b>
           <br><br>
 
-          Using these primivite operations we can build a simple C++ smart pointer template that transparently tags, untags, and dereferences a tagged pointer. Below is an example IsoAllocPtr template. It's constructor takes a private zone handle, and an existing pointer to a chunk allocated from that zone, which it tags and stores as a member variable. It overloads a dereference operator so it can transparently untag and dereference the pointer.
+          Using these primitive operations we can build a simple C++ smart pointer template that transparently tags, untags, and dereferences a tagged pointer. Below is an example IsoAllocPtr template. It's constructor takes a private zone handle, and an existing pointer to a chunk allocated from that zone, which it tags and stores as a member variable. It overloads a dereference operator so it can transparently untag and dereference the pointer.
           <br><br>
 <pre class="prettyprint" lang-html="cpp" style="border: 0;">
         template &lt;typename T&gt;
