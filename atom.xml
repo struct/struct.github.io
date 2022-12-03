@@ -5,6 +5,11 @@
 		<description>Root Cause - RSS Feed</description>
 		<link>https://struct.github.io/</link>
 			<item>
+				<title>Memory/Pointer Tagging In IsoAlloc</title>
+				<description>November 25th, 2022 - A brief overview of the Memory Tagging implementation in IsoAlloc inspired by MTECheckedPtr and ARM MTE.</description>
+				<link>https://struct.github.io/pointer_tagging.html</link>
+			</item>
+			<item>
 				<title>Hardening Partition Alloc</title>
 				<description>January 22, 2016 - In this article I dive into how PartitionAlloc works by first explaining its origins and how some of its basic allocation code paths work. I also introduce some basic hardening measures by randomizing the freelist and adding some basic double free protection.</description>
 				<link>https://struct.github.io/partition_alloc.html</link>
