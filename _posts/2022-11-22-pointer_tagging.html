@@ -17,10 +17,10 @@
         <h1><a href='http://struct.github.io'>Root Cause</a></h1>
         <p></p>
         <p class="view">
-        <a href="https://twitter.com/chrisrohlf"><img height="32" width="32" src="../icons/twitter.svg" /></a>&nbsp;
-        <a href="https://github.com/struct"><img height="32" width="32" src="../icons/github.svg" /></a>&nbsp;
-        <a href="https://www.linkedin.com/in/chrisrohlf"><img height="32" width="32" src="../icons/linkedin.svg" /></a>&nbsp;
-        <a href="mailto:chris dot rohlf _at_ gmail.com"><img height="32" width="32" src="../icons/gmail.svg" /></a>
+        <a href="https://twitter.com/chrisrohlf"><img height="32" width="32" src="https://raw.githubusercontent.com/struct/struct.github.io/master/icons/twitter.svg" /></a>&nbsp;
+        <a href="https://github.com/struct"><img height="32" width="32" src="https://raw.githubusercontent.com/struct/struct.github.io/master/icons/github.svg" /></a>&nbsp;
+        <a href="https://www.linkedin.com/in/chrisrohlf"><img height="32" width="32" src="https://raw.githubusercontent.com/struct/struct.github.io/master/icons/linkedin.svg" /></a>&nbsp;
+        <a href="mailto:chris dot rohlf _at_ gmail.com"><img height="32" width="32" src="https://raw.githubusercontent.com/struct/struct.github.io/master/icons/gmail.svg" /></a>
         </p>
       </header>
       <section>
@@ -99,7 +99,7 @@
             <br><br>
           The code above</a> declares a pointer, <i>_mtp</i>, just after the initial guard page, and then writes the random tags. Now when a caller invokes <i>iso_alloc_from_zone_tagged</i> we allocate a chunk from the zone normally, and then we call <a href="https://github.com/struct/isoalloc/blob/74a3fe4e93cf1f12c48158dde62a3f0713fea31b/src/iso_alloc_mem_tags.c#L31-L42"><i>_tag_ptr</i></a> before returning it.
 <br><br>
-          <center><img src="../img/mem_tagging.png" /></center>
+          <center><img src="https://raw.githubusercontent.com/struct/struct.github.io/master/img/mem_tagging.png" /></center>
           Below is the <i>_tag_ptr</i> function which calls <i>_iso_alloc_get_mem_tag</i> to retrieve the correct tag for a pointer. This function uses the zone metadata to compute where the tag for the chunk pointed to by <i>p</i> can be found. The tag is returned and <i>_tag_ptr</i> adds it to the LSB of the pointer before returning it to the caller.
           <br>
 <pre class="prettyprint" lang-html="cpp" style="border: 0;">
