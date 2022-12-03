@@ -5,14 +5,11 @@
     <meta charset="utf-8">
     <meta http-equiv="X-UA-Compatible" content="chrome=1">
     <title>Root Cause</title>
-    <link rel="stylesheet" href="stylesheets/styles.css">
-    <link rel="stylesheet" href="stylesheets/github-light.css">
+    <link rel="stylesheet" href="../stylesheets/styles.css">
+    <link rel="stylesheet" href="../stylesheets/github-light.css">
     <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-    <a class="btn btn-rss" href="/feed.xml" target="_blank"></a>
+    <a class="btn btn-rss" href="../feed.xml" target="_blank"></a>
     <link rel="alternate" type="application/atom+xml" title="{{ site.title }}" href="/atom.xml">
-    <!--[if lt IE 9]>
-    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
-    <![endif]-->
   </head>
   <body>
     <div class="wrapper">
@@ -20,10 +17,10 @@
         <h1><a href='http://struct.github.io'>Root Cause</a></h1>
         <p></p>
         <p class="view">
-        <a href="https://twitter.com/chrisrohlf"><img height="32" width="32" src="icons/twitter.svg" /></a>&nbsp;
-        <a href="https://github.com/struct"><img height="32" width="32" src="icons/github.svg" /></a>&nbsp;
-        <a href="https://www.linkedin.com/in/chrisrohlf"><img height="32" width="32" src="icons/linkedin.svg" /></a>&nbsp;
-        <a href="mailto:chris dot rohlf _at_ gmail.com"><img height="32" width="32" src="icons/gmail.svg" /></a>
+        <a href="https://twitter.com/chrisrohlf"><img height="32" width="32" src="../icons/twitter.svg" /></a>&nbsp;
+        <a href="https://github.com/struct"><img height="32" width="32" src="../icons/github.svg" /></a>&nbsp;
+        <a href="https://www.linkedin.com/in/chrisrohlf"><img height="32" width="32" src="../icons/linkedin.svg" /></a>&nbsp;
+        <a href="mailto:chris dot rohlf _at_ gmail.com"><img height="32" width="32" src="../icons/gmail.svg" /></a>
         </p>
       </header>
       <section>
@@ -102,7 +99,7 @@
             <br><br>
           The code above</a> declares a pointer, <i>_mtp</i>, just after the initial guard page, and then writes the random tags. Now when a caller invokes <i>iso_alloc_from_zone_tagged</i> we allocate a chunk from the zone normally, and then we call <a href="https://github.com/struct/isoalloc/blob/74a3fe4e93cf1f12c48158dde62a3f0713fea31b/src/iso_alloc_mem_tags.c#L31-L42"><i>_tag_ptr</i></a> before returning it.
 <br><br>
-          <center><img src="img/mem_tagging.png" /></center>
+          <center><img src="../img/mem_tagging.png" /></center>
           Below is the <i>_tag_ptr</i> function which calls <i>_iso_alloc_get_mem_tag</i> to retrieve the correct tag for a pointer. This function uses the zone metadata to compute where the tag for the chunk pointed to by <i>p</i> can be found. The tag is returned and <i>_tag_ptr</i> adds it to the LSB of the pointer before returning it to the caller.
           <br>
 <pre class="prettyprint" lang-html="cpp" style="border: 0;">
@@ -212,16 +209,5 @@ void iso_alloc_verify_ptr_tag(void *p, iso_alloc_zone_handle *zone)
         <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
       </footer>
     </div>
-    <script src="javascripts/scale.fix.js"></script>
-              <script type="text/javascript">
-            var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
-            document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
-          </script>
-          <script type="text/javascript">
-            try {
-              var pageTracker = _gat._getTracker("UA-65842316-1");
-            pageTracker._trackPageview();
-            } catch(err) {}
-          </script>
   </body>
 </html>
