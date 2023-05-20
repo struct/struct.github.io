@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Root Cause</title>
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/github-light.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1><a href='http://struct.github.io'>Root Cause</a></h1>
+        <p></p>
+        <p class="view">
+        <a href="https://twitter.com/chrisrohlf"><img height="32" width="32" src="icons/twitter.svg" /></a>&nbsp;
+        <a href="https://github.com/struct"><img height="32" width="32" src="icons/github.svg" /></a>&nbsp;
+        <a href="https://www.linkedin.com/in/chrisrohlf"><img height="32" width="32" src="icons/linkedin.svg" /></a>&nbsp;
+        <a href="mailto:chris dot rohlf _at_ gmail.com"><img height="32" width="32" src="icons/gmail.svg" /></a>
+        </p>
+      </header>
+      <section>
+        <h2><div id='post0'>Notes on RISC-V Support and Security Implication</div></h2>
+        <p><script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+          May 20th, 2023<br>
+          Chris Rohlf<br><br>
+          RISC-V (pronounced “risk five”) is an open standard instruction set architecture (ISA) developed in the open by a large number of contributors. 
+          It has a permissive license model for both open and closed source implementations of the standard. The RISC-V documentation, discussions, and 
+          standards are public and can be found on Github.
+          <br><br>
+          <b>Open Source RISC-V</b>
+          <br><br>
+          An open source ISA with active development is good, but it is largely useless until someone implements support for fundamental software 
+          components such as compilers, linkers, kernels, C libraries, debuggers, JITs etc. There is already wide support for the RISC-V ISA from 
+          mainstream open source software including LLVM, GCC, Linux Kernel, and Android among many others. But RISC-V standards are a rapidly moving 
+          target and as new designs emerge this software support will need to greatly expand.
+          <br><br>
+          Future investment in RISC-V will likely include a similar open source contribution, either complete open sourcing of chip designs, or smaller 
+          upstream contributions to various existing software projects to support the software stack that will run on top of these new chips. A large 
+          set of foundational components must first be modified/built to support this architecture before the platform is suitable for user applications:
+          <br><br>
+            <ul>
+                <li>LLVM and GCC Compiler Infrastructure
+                    <ul>
+                        <li>Code generation</li>
+                        <li>Optimization pipelines</li>
+                    </ul>
+                </li>
+                <li>Just In Time (JIT) compilation support
+                    <ul>
+                        <li>Javascript JIT components in web browsers</li>
+                        <li>Android Dalvik/ART JIT</li>
+                        <li>Linux Kernel BPF</li>
+                    </ul>
+                </li>
+                <li>Foundational C Libraries (libc, math etc)
+                    <ul>
+                        <li>Common functions (memcpy, memset etc) optimized for RISC-V</li>
+                        <li>Machine optimized floating point, matrix multiplication, and vector operations</li>
+                    </ul>
+                </li>
+                <li>Toolchains
+                    <ul>
+                        <li>GNU Binutils</li>
+                        <li>Debuggers (GDB, LLDB)</li>
+                        <li>Disassemblers, decompilers</li>
+                    </ul>
+                </li>
+            </ul>
+        <br>
+          <b>RISC-V Security</b>
+          <br><br>
+          Over the last decade many general security and memory safety exploit mitigation technologies migrated from software to hardware 
+          (Intel CET, ARM MTE, ARM BTI, ARM Trustzone etc). These hardware implementations are significantly more performant than software at 
+          protecting forward and backward edge control flow transfers, enforcing privilege levels, and more. Many similar concepts have found 
+          their way into the RISC-V standards. Studying these specifications will be key to understanding how secure, or insecure, a RISC-V 
+          implementation / based device is.
+          <br><br>
+          <ul>
+            <li><b>Control Flow Integrity</b>
+                <ul>
+                    <li>“To enforce backward edge control flow integrity, the extension introduces a shadow stack. To enforce forward edge control flow integrity, the extension introduces labeled landing pad instructions.”</li>
+                    <li>This standard is still under development but will heavily influence exploitation strategies against memory safety vulnerabilities in RISC-V targets.</li>
+                    <li>If a RISC-V implementer deploys these correctly they may significantly raise the bar for exploitation relative to proprietary ISA’s. But if they choose to not implement them, and the implementation is not available in a widely adopted compiler toolchain, then software vulnerabilities running on these systems would be easily exploitable.</li>
+                    <li><a href="https://github.com/riscv/riscv-cfi">https://github.com/riscv/riscv-cfi</a></li>
+                </ul>
+            </li>
+            <br>
+            <li><b>JIT’d Language Targets</b>
+                <ul>
+                    <li>This standard is attempting to make RISC-V ISA more friendly to programming languages that are typically JIT’d from an interpreted bytecode (Python, Ruby, Javascript etc). These extensions would primarily serve to make JIT development easier and produce more performant code for common operations and design patterns such as NaN-Boxing, and dynamic typing.</li>
+                    <li>Could result in different instruction density and security relevant constructs for programs written in these languages.</li>
+                    <li><a href="https://github.com/riscv/riscv-j-extension">https://github.com/riscv/riscv-j-extension</a></li>
+                </ul>
+            </li>
+            <br>
+            <li><b>Cryptography Extension</b>
+                <ul>
+                    <li>“This repository is used to develop standardization proposals for scalar and vector cryptographic instruction set extensions for the RISC-V architecture.”</li>
+                    <li>Cryptographic instruction extensions make heavily used mathematical operations in common cryptographic schemes much more performant (e.g. vectorizing AES-CTR/GCM operations so they may be performed many times per-second over data streams).</li>
+                    <li>This standard could also influence how security critical operations such as secure boot are implemented.</li>
+                    <li><a href="https://github.com/riscv/riscv-crypto">https://github.com/riscv/riscv-crypto</a></li>
+                </ul>
+            </li>
+            <br>
+            <li><b>Virtual Memory Extension</b>
+                <ul>
+                    <li>This standard is focusing on virtual memory specifics such as address translation, cacheability, etc.</li>
+                    <li>This standard is important for understanding any side channel risks inherent to the architecture as demonstrated on other popular ISA’s over the last several years (e.g. Spectre, Meltdown etc).</li>
+                    <li><a href="https://github.com/riscv/virtual-memory">https://github.com/riscv/virtual-memory</a></li>
+                </ul>
+            </li>
+            <br>
+            <li><b>Multi Zone Privilege Security Model</b>
+                <ul>
+                    <li>Some RISC-V implementers have created support for a Trusted Execution Environment.</li>
+                    <li>These capabilities allow implementers to create different security privilege levels and domains that separate untrusted code from trusted code.</li>
+                    <li><a href="https://hex-five.com/multizone-security-tee-riscv">https://hex-five.com/multizone-security-tee-riscv</a></li>
+                    <li><a href="https://hex-five.com/download">https://hex-five.com/download</a></li>
+                    <li><a href="https://github.com/hex-five/multizone-api">https://github.com/hex-five/multizone-api</a></li>
+                </ul>
+            </li>
+            </ul>
+          <br> 
+          When a RISC-V implementer publishes their product as compliant with a specific RISC-V standard it creates an opportunity to diff that 
+          product's specific implementation against the standard. Any deviations from the standard will be worth investigating for security 
+          vulnerabilities or backdoors. This is not an operation you can easily perform against a proprietary ISA.
+          <br><br>   
+          RISC-V has the potential to bring new and exciting security capabilities to semiconductors from low end embedded devices all the way 
+          up to edge computing, high performance cloud computing, and even ‘supercomputers’.
+          <br><br>   
+          Given the open nature of RISC-V standards I expect the ecosystem of RISC-V implementations to suffer many of the same issues the Android 
+          ecosystem has. Some implementations will be incomplete, or deviate from the specification in undocumented ways to support specific workloads 
+          they were designed for. These differences will create security vulnerabilities for consumers as devices based on RISC-V begin to be deployed 
+          at scale. The diversity of the RISC-V ecosystem may present the biggest security challenges in the years ahead. But it also has the potential 
+          to create opportunities for security protections to be designed, implemented, and deployed at scale in rapid time.
+</p>
+      </section>
+    </div>
+  </body>
+</html>
