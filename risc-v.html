@@ -32,18 +32,48 @@
       <section>
         <h2><div id='post0'>Notes on RISC-V Support and Security Implications</div></h2>
         <p><script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
-          May 20th, 2023<br>
+          <s>May 20th, 2023</s><br>
+          Updated: January 18th, 2024<br>
           Chris Rohlf<br><br>
-          RISC-V (pronounced “risk five”) is an open standard instruction set architecture (ISA) developed in the open by a large number of contributors. 
+          RISC-V (pronounced “risk five”) is an open standard Instruction Set Architecture (ISA) developed in the open by a large number of contributors. 
           It has a permissive license model for both open and closed source implementations of the standard. The RISC-V documentation, discussions, and 
           standards are public and can be found on Github.
           <br><br>
+          <b>DeRiscing General Computing From Export Controls</b>
+          <br><br>
+
+The October 7th (2022) rule published by BIS placed new unprecedented restrictions on the export of certain semiconductors and related fabrication materials, supplies, and software to China.
+<br><br>
+<blockquote>“Certain Advanced Computing and Semiconductor Manufacturing Items; Supercomputer and Semiconductor End Use; Entity List Modification”</blockquote>
+<br>
+<center><i>Bureau of Industry and Security</i></center>
+<br>
+These export control rules are written to target performance metrics of semiconductors (e.g. TFLOPS/TOPS), and not specific chip architectures by name, or general description. Although the October 
+7th rule likely targeted high end chips designed and sold for AI/ML applications they likely created a lot of uncertainty for the future of general high performance computing in China. It’s worth 
+noting that even modern general purpose computing cores come equipped with advanced matrix multiplication instructions for edge AI applications. What was ‘high performance computing’ reserved for 
+data centers just 5 years ago now sits idle in your pocket.<br><br>
+
+One might want to consider what a v2 of these export controls might look like. Could they target semiconductors meant for general purpose computing? And if so, at what point in the supply chain would
+ be the most likely choke point? Despite Asia’s dominance in the fabrication and manufacturing of semiconductors, the most popular general purpose computing ISA's and designs are the intellectural property of western companies. 
+ In many cases these can be licensed for a fee. This business model presents an excellent opportunity for some, and a difficult choice for others. One potential way to avoid this is to invest heavily in a 
+ modern alternative that is not subject to such licensing requirements.<br><br>
+
+RISC-V meets some of those needs, at least for the ISA. The ISA is only one such component in a modern SoC but it's an extremely important one. Designing a new ISA from scratch 
+without the input of industry contributors is an enormous undertaking. As we discuss below, specifying the ISA is just the first step of many. A proprietary ISA requires a large investment in software infrastructure 
+in foundational components needed to support it. Developing these from scratch, and not contributing changes to the existing software infrastructure needed to power their use, is extremely unlikely to succeed.<br><br>
+
+Chinese tech companies are <a href="https://www.ft.com/content/1d017204-96e8-4d0a-a737-83cf091d41da">likely to invest heavily in RISC-V</a> going forward as a 
+way to de-risk their dependence on western designs and intellectual property.<br>
+          <br>
           <b>Open Source RISC-V</b>
           <br><br>
           An open source ISA with active development is good, but it is largely useless until someone implements support for fundamental software 
           components such as compilers, linkers, kernels, C libraries, debuggers, JITs etc. There is already wide support for the RISC-V ISA from 
           mainstream open source software including LLVM, GCC, Linux Kernel, and Android among many others. But RISC-V standards are a rapidly moving 
           target and as new designs emerge this software support will need to greatly expand.
+          <br><br>
+          Almost 1 year before the October 7th rule was announced Alibaba <a href="https://www.cnx-software.com/2021/10/20/alibaba-open-source-risc-v-cores-xuantie-e902-e906-c906-and-c910/">open sourced</a> the design of four of its RISC-V cores. These cores target a 
+          range of workloads from embedded microcontrollers to cloud servers. The open source documentation and code for these cores can be found <a href="https://github.com/T-head-Semi">here</a>. 
           <br><br>
           Future investment in RISC-V will likely include a similar open source contribution, either complete open sourcing of chip designs, or smaller 
           upstream contributions to various existing software projects to support the software stack that will run on top of these new chips. A large 
