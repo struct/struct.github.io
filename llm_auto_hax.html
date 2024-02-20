@@ -37,10 +37,9 @@
 
           I recently read a paper titled <a href="https://arxiv.org/abs/2402.06664v1">"LLM Agents can Autonomously Hack Websites"</a> which discusses research into using LLM's for autonmous discovery
           and exploitation of web application security vulnerabilities. The concept of using LLM's to automate offensive actions in cyber is hotly debated topic in technical and policy circles. I won't spend 
-          time here capturing all points of view on this issue, but no matter what your opinion is it's important to view this kind of research objectively.
+          time here capturing all points of view on this issue, but no matter what your opinion is it's important to view this kind of research objectively by analyzing the data.
           <br><br>
-          The automation of offensive cyber capabilities
-          has the potential to lower costs for threat actors and defenders alike. Any claim of AI powered offensive cyber capabilities should be carefully analyzed. This
+          The automation of offensive cyber capabilities has the potential to lower costs for attackers and defenders alike. Any claim of AI powered offensive cyber capabilities should be carefully analyzed. This
           paper has been making the rounds, and is being somewhat sensationalized by AI experts who don't understand the current state of the art in cyber security.
           <br><br>
           I've extracted what I think are some of the most relevant sections of this paper below along with my analysis of the research conclusions.
@@ -83,8 +82,9 @@
           an HTTP GET or POST message that it doesn't understand or doesn't match a pattern or route/handler it's looking for it will send a return HTTP error code, usually something like 404 or 500. This
           does not affect the stability of the application in the same way a crash in native code would. So a brute force approach for discovery and exploitation of these vulnerabilities is common.
           Failed exploitation attempts will be logged, but when these sites are exposed to the internet they often receive tens of thousands of similar requests within minutes. We already know 
-          traditional non-AI based tools like sqlmap and Burp, which the paper never mentions, can discover and exploit the same kinds of vulnerabilities through brute force alone. Sometimes this can take dozens or 
-          hundreds of requests before succeeding. The authors provided the average number of 'function calls' (which I presume means HTTP requests?) in the table below.
+          traditional non-AI based tools like <a href="https://sqlmap.org/">sqlmap</a> and <a href="https://portswigger.net/burp">Burp</a>, which the paper never mentions, can discover and exploit the same kinds of 
+          vulnerabilities through brute force alone. Sometimes this can take dozens or hundreds of requests before succeeding. But the authors presented no baseline against existing tools such as these, so it is
+          difficult to judge whether their approach provides an advantage to the attacker above the current state of the art. The authors did provide the average number of 'function calls' (which I presume means HTTP requests?) in the table below.
           <br><br>
           <img src="img/ai_autonomous_hack_table3.png">
           Some of these vulnerabilities can be broken down in order to contextualize their values. The vulnerabilities that require a little trial and error to exploit (e.g. SQLi, XSS, LFI, SSTI) show numbers comparable to, or possibly a little lower than, what I'd expect 
@@ -124,7 +124,7 @@
           </blockquote>
           <br>
           I acknowledge this is an autonomous AI agent and not an experienced penetration tester, but these success rates are low when you consider they come from a model which likely costs tens of millions of dollars to train. Nothing in this
-          table convinces me there is some step change here in autonomous offensive cyber capabilities provided by these models just yet. However the prompts and documentation fed to the model for this research remain unreleased and so we are
+          table convinces me there is some significant new development of autonomous offensive cyber capabilities provided by these models just yet. However the prompts and documentation fed to the model for this research remain unreleased and so we are
           unable to inspect and analyze them.
           <br><br>
           <blockquote>
@@ -146,7 +146,12 @@
           vulnerable web applications which would provide a lot more context for their findings, and would be unlikely to put anyone at risk. Overall, while I assume a good faith effort from the authors, I find the lack of transparency and 
           evidence in this paper concerning. Publishing this kind of research, without the data to back it up, reinforces the false narrative that AI models are dangerous for cyber security and must be controlled.
           <br><br>
-          I remain a believer that AI models being trained today will offer a significant step change in our ability to defend against cyber attacks and generally improve the quality of software in a way that scales to the velocity of modern software development.
+          <b>Conclusion</b>
+          <br>
+          This paper has unfortunately been at the center of some recent hype by knowledgeable people in the AI/ML community. However after reading this paper I am convinced that hype stems from a lack of knowledge and awareness of cyber security history and the current
+          state of the art tooling in the field which achieves as good of results if not better with significantly less cost and compute.
+          <br><br>
+          I remain a believer that AI models being trained today will offer a significant advantage for defenders in their ability to detect cyber attacks and generally improve the quality of code in a way that scales to the velocity of modern software development.
           This paper reinforces my belief that there is a gap between AI experts and cyber security experts. Only once that gap is closed will we realize the value of these models for cyber security.
           </p>
       </section>
