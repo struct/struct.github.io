@@ -36,7 +36,7 @@
           Chris Rohlf
           <br><br>
     The AI community, and governments alike, have largely landed on FLOPs spent during pretraining as a proxy for AI capabilities. While I don't particularly like this metric the AI community has not 
-    settled on better way to accurately measure a models capabilities beyond asking an organization like NIST to research and standardize benchmarks for more consistent measurement. As currently understood AI scaling laws have shown 
+    settled on a better way to accurately measure a models capabilities beyond asking an organization like NIST to research and standardize benchmarks for more consistent measurement. As currently understood AI scaling laws have shown 
     the more compute used in pretraining the more capable a model is. This is objectively evidenced by showing how larger models perform better 
     on standard benchmarks. However "AI capabilities" is often code for "safety", i.e. as models become larger they become more dangerous, a theory I am skeptical of as the "unsafe" nature of larger models are largely
     assumed and almost never backed by supporting data.
@@ -132,7 +132,8 @@
     These effectively created a USG position that implied only certain entities could perform specific mathematical calculations and if you wanted the security provided by those calculations then
     you would have to use their deeply flawed implementation. Furthermore it's worth noting that the Clipper Chip itself had fundamental design vulnerabilities which underscores the necessity of building near 
     perfect HEMs if they are to be built at all. To be clear, HEMs don't present the same level of backdoor functionality as the Clipper Chip did, but the very concept of a HEM is built on the assumption that 
-    open source AI models trained with the same level of FLOPs that a HEM would restrict would likely be a non-starter. It places restrictions on who can perform matrix muplication operations and how many of them they may perform.
+    open source AI models trained with the same level of FLOPs that a HEM would restrict would likely be a non-starter. It places restrictions on who can perform matrix muplication operations and how many of them they may perform. 
+    Restricting open source AI models likely harms national security more than it benefits it.
     <br><br>
     The concept of a HEM is built on the assumption that if certain properties of the GPUs used to train large foundational models can be remotely governed or restricted than USG can prevent adversaries 
     from acquiring the models that level of compute results in. However algorithmic efficiency and architecture improvements are likely to continue bringing down the compute necessary to train more advanced models which could
