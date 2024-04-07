@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="javascripts/scale.fix.js"></script>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-1ZHQ6N5ZEZ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-1ZHQ6N5ZEZ');
+    </script>
+    <script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Root Cause</title>
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/github-light.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1><a href='http://struct.github.io'>Root Cause</a></h1>
+        <p></p>
+        <p class="view">
+        <a href="https://twitter.com/chrisrohlf"><img height="32" width="32" src="icons/twitter.svg" /></a>&nbsp;
+        <a href="https://github.com/struct"><img height="32" width="32" src="icons/github.svg" /></a>&nbsp;
+        <a href="https://www.linkedin.com/in/chrisrohlf"><img height="32" width="32" src="icons/linkedin.svg" /></a>&nbsp;
+        <a href="mailto:chris dot rohlf _at_ gmail.com"><img height="32" width="32" src="icons/gmail.svg" /></a>
+        </p>
+      </header>
+      <section>
+        <h2><div id='post0'>AI and Hardware Enforced Export Controls</div></h2>
+        <p><script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+          April 7th, 2024<br>
+          Chris Rohlf
+          <br><br>
+    The AI community, and governments alike, have largely landed on FLOPs spent during pretraining as a proxy for AI capabilities. While I don't particularly like this metric the AI community has not 
+    settled on better way to accurately measure a models capabilities beyond asking an organization like NIST to research and standardize benchmarks for more consistent measurement. As currently understood AI scaling laws have shown 
+    the more compute used in pretraining the more capable a model is. This is objectively evidenced by showing how larger models perform better 
+    on standard benchmarks. However "AI capabilities" is often code for "safety", i.e. as models become larger they become more dangerous, a theory I am skeptical of as the "unsafe" nature of larger models are largely
+    assumed and almost never backed by supporting data.
+    <br><br>
+    In October 2022 (and revised in 2023) BIS '<a href="https://www.federalregister.gov/documents/2023/10/25/2023-23049/export-controls-on-semiconductor-manufacturing-items">Export Controls on Semiconductor Manufacturing Items</a>'
+    limits China's ability to acquire GPU's capable of the compute necessary needed to train these large models. In practice this means GPU's such as NVIDIA's A100 and H100 cannot be acquired in China, at least not in large quantities.
+    The idea behind these controls is <i>"to protect U.S. national security interests by restricting the People's Republic of China (China's) military modernization efforts and degrading its ability to violate human rights."</i>
+    <br><br>
+    Enforcing these kinds of controls on software and commodity hardware is <a href="https://www.reuters.com/technology/chinas-military-government-acquire-nvidia-chips-despite-us-ban-2024-01-14/">not always straight forward</a>. 
+    An old solution has begun to emerge to solve this new problem. That old solution is a combination of Remote Attestation and Tamper Detection technologies to create
+    "Hardware Enabled AI Governance" as a means for monitoring and enforcing the operations these chips are able to perform while training large models. If this sounds
+    a lot like DRM thats because it's conceptually very similar in its design, enforcement mechanisms, and implementation.
+    <br><br>
+    Im aware of two separate documents on this topic. The first is from RAND titled "<a href="https://www.rand.org/pubs/working_papers/WRA3056-1.html">Hardware Enabled Governance Mechanisms</a>",
+    and the second is from Center For New American Security titled "<a href="https://www.cnas.org/publications/reports/secure-governable-chips">Secure, Governable Chips</a>". 
+    Both papers propose a similar solution, I won't recap each paper here but I will describe the solution at a high level. The RAND report uses the term
+    "Hardware Enabled Governance Mechanism" which they shorten to HEM's. I'll be using HEM's to refer to this general technology for the remainder of this article.
+    <br><br>
+    <b>HEM Overview</b>
+    <br><br>
+    Modern GPUs provide real time data on FLOPs, thermal temperatures, and power consumption among other data points as they are used to train models or perform other 
+    complex computations. These interfaces can conceptually be repurposed to create a governing mechanism that places limits on some of these capabilities without the proper license. These 
+    licenses would be cryptographically signed and verified by the GPU before they performed their authorized workload. They would then subsequently report on their usage to whomever granted 
+    the license. Remotely enabled or disabled hardware functionality is not an entirely new idea, and has been tried previously in <a href="https://en.wikipedia.org/wiki/Intel_Upgrade_Service">
+    commercial products from Intel</a>.
+    <br><br>
+    <b>Technical Challenges</b>
+    <br><br>
+    Designing and implementing a sophisticated and secure HEM system would likely be difficult, time consuming, and expensive. A HEM could be implemented in a
+    number of different ways in hardware, firmware, or a combination of both. A pure hardware solution would be harder to defeat but more costly per chip
+    and ultimately less flexible should it need to be updated or provide a sufficiently complex set of functionality. The various different hardware designs that could implement a HEM will 
+    each have their own unique tradeoffs and threat models. For example, you could choose to build components of the HEM directly onto the GPU die to make physical attacks harder but this uses valuable real estate
+    on the die which could otherwise be used to hold more cores and thus perform more computations. It may also be possible to attack these features with microarchitectural
+    side channel vulnerabilities similar to those discovered in nearly all modern CPU and GPU. The HEM could be implemented in a separate processor on the board
+    designed specifically for purpose with tamper detection seals and self wiping functionality. Additionally a Physical Uncloneable Function (PUF) could be used to provide stronger 
+    cryptographic guarantees. All hardware approaches are susceptible to various physical attacks, including fault injection and side channels, however these are usually not insurmountable for a nation state level 
+    attacker who can acquire large quantities of these devices.
+    <br><br>
+    Implementing the HEM entirely in software/firmware is a lot cheaper and more flexible than the hardware based approach. A software based solution could include complex and extendable functionality. 
+    Companies like NVIDIA already offer a confidential computing implementation on their GPUs that could theoretically serve as the platform for the HEM to be built on. There are many existing
+    Trusted Execution Environment's (TEE) from which to model a HEM on. The value of a TEE is it logically separates higher level code execution from trusted operations
+    but these environments are not perfect and are often vulnerable to the same kinds of software security flaws consumer operating systems and applications are. There are many 
+    historical examples of software security vulnerabilities that have been implemented in TEE's including side channels and cryptographic design flaws. 
+    <a href="https://cset.georgetown.edu/article/memory-safety-an-explainer/"> Memory safety</a> issues are another common vulnerability pattern in TEE's usually because they are 
+    written in C due to runtime constraints. A nation state level attacker will likely be able to extract the firmware and reverse engineer it for vulnerabilities. No amount
+    of obfuscation of this binary code will provide a security guarantee. We should assume nation state level adversaries will attempt to gain access to the source code directly
+    where it is developed, along with the devices of the engineers who wrote the code, and that any software based solution will be susceptible to software supply chain attacks.
+    <br><br>
+    The CNAS report has a section titled <i>THE TRACK RECORD OF SIMILAR TECHNOLOGY</i> with good examples. Interestingly it cites a counter example in the iPhone Secure Enclave
+    which has largely held up to various attacks in recent years. However it is worth noting that the negative impact of an iPhone jailbreak is not comparable to 
+    bypassing a HEM solution intended to enforce an export control regime. Any adversary interested in bypassing a HEM will invest significantly more resources into it
+    than any iPhone jailbreak attempt. We should assume that any bypass or security vulnerability present in a HEM will be discovered and exploited by an adversary.
+    <br><br>
+    Whether a hardware or software based solution is used the implementation must be near perfect to provide long term value. Even with online licensing models patching HEM's will likely
+    not be as straight forward as patching traditional software systems as the HEM will be in the hands of an adversary. It must be extremely costly to defeat with the 
+    attack at best scaling linearly with the number of HEMs they intend to bypass. For example, if every HEM contained a memory safety vulnerability that allowed for arbitrary
+    code execution which could be used to bypass it then the attack is very cheap to execute as the attack is generalized and applies to each HEM. But if defeating every HEM requires reverse 
+    engineering a PUF with custom hardware to extract a unique cryptographic key for each HEM then the cost of defeat could be significantly higher. It's also important, even if obvious, to 
+    note that unless every GPU capable of a FLOPs measurement covered by the 
+    export controls implements a HEM then there is no protection at all as an adversary will just choose the shortest path to the compute they require. China, the target of the
+    October 2022 rule, has signaled it will start upwards of <a href="https://www.newswire.ca/news-releases/global-semiconductor-capacity-projected-to-reach-record-high-30-million-wafers-per-month-in-2024-semi-reports-822607392.html">
+    18 semiconductor projects in 2024</a> alone. Even if their ability to manufacture chips with these performance capabilities is several years away it signals 
+    their willingless to invest large sums of capital into overcoming these restrictions.
+    <br><br>
+    <b>Open Questions</b>
+    <br><br>
+    I highly recommend reading both the CNAS and RAND paper on HEM's as they cover a lot more technical ground and aspects of the threat model than I have here. However I believe 
+    there are many important questions policymakers and engineers will need to consider regarding the technical feasibility of implementing and enforcing such a system.
+    <br><br>
+    <ul>
+        <li>Like any complex functionality HEMs will create new attack surface for good actors. How can we ensure HEMs cannot be abused or exploited to target good actors? Will
+            entities not subject to the export rules be able to disable their HEM entirely?
+        </li>
+        <li>Who is responsible for building and maintaining the cryptographic infrastructure needed for key management? How transparent is this infrastructure and key management? Does the USG direct
+            semiconductor manufacturers when and where to issue a cryptographically signed license or does it control this infrastructure itself?
+            Ensuring this is done securely and correctly is expensive, time consuming, and difficult. Having independent companies operate this infrastructure makes them 
+            extremely vulnerable to compromise (from both internal and external attackers) and coercion.</li>
+            <li>Who will receive and take action on the signal provided by HEMs? Is the expectation that these signals will be evaluated in real time at machine speed? Or does the implementation
+            of such a policy look more like nuclear weapons inspections?</li>
+            <li>Compute costs at volume can often be material to a company, or potentially expose sensitive intellectual property. Who will collect and secure the reporting data from HEMs?</li>
+            <li>Who determines and verifies the level of security a HEM implementation must meet in order to be certified? How often can HEMs be updated and must they be recertified each time?</li>
+        <li>History has proven that no system is completely secure. Considering the high cost to design, implement, and enforce HEM's how much value do we expect or require HEMs to provide before 
+            they are bypassed through a software or hardware design flaw?</li>
+        <li>FLOPs is the dominant capability proxy metric today, but in the future this could shift. How will HEMs be designed flexibly enough to keep up with these changing trends? The 
+            answer to this question could be that some or all of HEM functionality must be implemented in firmware which as stated earlier means a potential tradeoff in security.
+        </li>
+    </ul>
+    <br>
+    <b>Conclusion</b>
+    <br><br>
+    HEMs present a potential technical solution to a policy problem and an interesting technical challenge in their own right. However I can't help but draw negative parallels to the <a href="https://en.wikipedia.org/wiki/Clipper_chip">
+    Clipper Chip</a>. The Clipper Chip arrived in a similar time frame as strict export controls in <a href="https://en.wikipedia.org/wiki/Export_of_cryptography_from_the_United_States">cryptographic software</a> solutions. 
+    These effectively created a USG position that implied only certain entities could perform specific mathematical calculations and if you wanted the security provided by those calculations then
+    you would have to use their deeply flawed implementation. To be clear, HEMs don't present the same level of backdoor functionality as the Clipper Chip did, but the very concept of a HEM is built on the assumption that 
+    open source AI models trained with the same level of FLOPs that a HEM would restrict would likely be a non-starter. It places restrictions on who can perform matrix muplication operations and how many of them they may perform. 
+    Furthermore it's worth noting that the Clipper Chip itself had fundamental design vulnerabilities which underscores the necessity of building near perfect HEMs if they are to be built at all.
+    <br><br>
+    The concept of a HEM is built on the assumption that if certain properties of the GPUs used to train large foundational models can be remotely governed or restricted than USG can prevent adversaries 
+    from acquiring the models that level of compute results in. However algorithmic efficiency and architecture improvements are likely to continue bringing down the compute necessary to train more advanced models which could
+    make HEMs a moot point.
+    <br><br>
+    <i>Note: I am not an export control expert. BIS rules are complex and complicated. I will happily accept any feedback on my errors here.</i>
+    </p>
+      </section>
+    </div>
+  </body>
+</html>
