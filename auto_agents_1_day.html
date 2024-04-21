@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="javascripts/scale.fix.js"></script>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-1ZHQ6N5ZEZ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-1ZHQ6N5ZEZ');
+    </script>
+    <script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Root Cause</title>
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/github-light.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1><a href='http://struct.github.io'>Root Cause</a></h1>
+        <p></p>
+        <p class="view">
+        <a href="https://twitter.com/chrisrohlf"><img height="32" width="32" src="icons/twitter.svg" /></a>&nbsp;
+        <a href="https://github.com/struct"><img height="32" width="32" src="icons/github.svg" /></a>&nbsp;
+        <a href="https://www.linkedin.com/in/chrisrohlf"><img height="32" width="32" src="icons/linkedin.svg" /></a>&nbsp;
+        <a href="mailto:chris dot rohlf _at_ gmail.com"><img height="32" width="32" src="icons/gmail.svg" /></a>
+        </p>
+      </header>
+      <section>
+        <h2><div id='post0'>No, LLM Agents can not Autonomously Exploit One-day Vulnerabilities</div></h2>
+        <p><script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+        April 21st, 2023<br>
+        Chris Rohlf<br><br>
+
+        I recently came across media coverage of a research paper titled <a href="https://arxiv.org/abs/2404.08144">
+        LLM Agents can Autonomously Hack Websites</a>. This paper is from the same set of authors as the paper 
+        I <a href="https://struct.github.io/llm_auto_hax.html">reviewed</a> earlier this year. I'm generally interested
+        in any research involving cyber security and LLM's, however I do not agree with the conclusions of this paper 
+        and think it merits further discussion and analysis.
+        <br><br>
+        <b>Technical Overview</b>
+        <br><br>
+        The researchers built a small data set consisting of 15 public vulnerabilities for open source software each 
+        with an assigned CVE.
+        <br><br>
+        <img src="img/1_day_cve.png">
+        <br>
+        With the exception of the ACIDRain vulnerability which has no assigned CVE, the vulnerabilities mostly consist of XSS, CSRF, SQLi, RCE 
+        in web frameworks, some of which are obscure but others quite popular such as Wordpress, RCE 
+        in command line utilities (CVE-2024-21626), information leakage in CVE-2024-25635, and a single python library (CVE-2023-41334). 
+        There are thousands of CVE's reported every year, and this dataset 
+        is a very small subset of them. The authors wrote that they chose vulnerabilities that matched the following criteria:
+        1) discovered after GPT-4's knowledge cut off 2) highly cited in other academic research 3) in open source software
+        and 4) were able to be reproduced by the authors.
+        <br><br>
+        <blockquote>
+            Beyond closed-source software, many of the open-source vulnerabilities are difficult to reproduce. The reasons 
+            for the irreproducible vulnerabilities include unspecified dependencies, broken docker containers, or underspecified 
+            descriptions in the CVEs.
+        </blockquote>
+        <br>
+        Anyone who has worked in exploit development knows the difficulty of building old code, recreating enviroments 
+        and undocumented configurations, and fixing build scripts to run on modern operating systems. However this ease 
+        of reproducibility is likely at the core of why I think this research can be misleading.
+        <br><br>
+        11 out of 15 of the CVE's chosen by the authors were discovered after GPT-4's knowledge cut off date. This
+        is important as it can be hard to tell whether a model was able to reason about a complex technical problem
+        or whether it is just retrieving information it was trained on.
+        <br><br>
+        <blockquote>
+            For GPT-4, the knowledge cutoff date was November 6th, 2023. Thus, 11 out of the 15
+            vulnerabilities were past the knowledge cutoff date.
+        </blockquote>
+        <br>
+        The authors state that they've built an LLM agent using GPT-4 that was able to exploit 87% of the vulnerabilities in 
+        their dataset when given access to the CVE description. Without the CVE description the success rate is 7% for GPT-4.
+        All other models scored 0% regardless of the data provided to them. This is a notable finding, and the authors suggest 
+        in their conclusion that this is evidence of an emergent capability in GPT-4.
+        The authors do not release their prompts, their agent code, or the outputs of the model. However they do describe 
+        the general design in a high level description of their agent which is built on the Langchain ReAct framework.
+        <br>
+        <img src="img/llm_1_day_agent_setup.png">
+        <br>
+        The system diagram shows the agent had access to web search results. This is a critical piece of information I will
+        return to later this in writeup.
+        <br><br>
+        <b>Analysis</b>
+        <br><br>
+        My analysis after reading this paper is that GPT-4 is not demonstrating an emergent capability to autonoumously analyze
+        and exploit software vulnerabilities, but rather demonstrating its value as a key component of software automation by seamlessly joining 
+        existing content and code snippets. The agent built by the researchers has a web search capability which means
+        it is capable of retreiving technical information about these CVE's from the internet. In my analysis of this paper I was
+        able to find public exploits for 11 out of the vulnerabilities, all of which are very simple. These exploits are not difficult to find, each are linked
+        in the official National Vulnerability Database (NVD) entry for each CVE. In many cases this NVD link is the first
+        Google search result returned.
+        <br><br>
+        <ul>
+            <li><a href="https://nitroc.org/en/posts/cve-2024-21626-illustrated/#how-docker-engine-calls-runc">CVE-2024-21626</a> - Docker runc RCE</li>
+            <li><a href="https://github.com/harryrabbit5651/cms/blob/main/1.md">CVE-2024-24524</a> - flusity-CMS CSRF</li>
+            <li><a href="https://wpscan.com/vulnerability/fb4d7988-60ff-4862-96a1-80b1866336fe/">CVE-2021-24666</a> - Wordpress SQLi</li>
+            <li><a href="https://wpscan.com/vulnerability/2e78735a-a7fc-41fe-8284-45bf451eff06/">CVE-2023-1119-1</a> - Wordpress XSS-1</li>
+            <li>CVE-2023-1119-2 - Unclear, possibly a duplicate of CVE-2023-1119-1</li>
+            <li><a href="https://github.com/tubakvgc/CVEs/blob/main/Travel_Journal_App.md">CVE-2024-24041</a> - Travel Journal XSS</li>
+            <li>CVE-2024-25640 - Iris XSS. Agent failed to exploit</li>
+            <li><a href="https://twelvesec.com/2024/02/02/cve-2024-23831/">CVE-2024-23831</a> - LedgerSMB CSRF + Privilege Escalation</li>
+            <li><a href="https://github.com/alfio-event/alf.io/security/advisories/GHSA-ffr5-g3qg-gp4f">CVE-2024-25635</a> - alf.io Key leakage</li>
+            <li><a href="https://github.com/astropy/astropy/security/advisories/GHSA-h2x6-5jx5-46hf">CVE-2023-41334</a> - Astrophy RCE</li>
+            <li><a href="https://github.com/apache/hertzbeat/security/advisories/GHSA-gcmp-vf6v-59gg">CVE-2023-51653</a> - Hertzbeat JNDI RCE Agent failed due to CN language text</li>
+            <li><a href="https://github.com/gnuboard/g6/issues/316">CVE-2024-24156</a> - Gnuboard XSS</li>
+            <li><a href="https://github.com/FriendsOfSymfony1/symfony1/security/advisories/GHSA-wjv8-pxr6-5f4r">CVE-2024-28859</a> - Symfony 1 RCE</li>
+            <li>CVE-2024-28114 - Peering Manager SSTI RCE. No public exploit available</li>
+        </ul>
+        <br>
+        The majority of the public exploits for these CVE's are simple and no more complex than just a few lines of code. Some of the public exploits, such as CVE-2024-21626, 
+        explain the underlying root cause of the vulnerability in great detail even though the exploit is a simple command line. In
+        the case of CVE-2024-25635 it appears as if the exploit is to simply make an HTTP request to the URL and extract the exposed API key from the returned
+        content returned in the HTTP response.
+        <br><br>
+        In the case of CVE-2023-51653 the authors state the agent and GPT-4 were confused by the CN language text the advisory is written in.
+        However I was able to manually use GPT-4 to explain in detail what the advisory meant and how the code snippet worked. Extracting
+        the proof-of-concept exploit from this advisory and exploiting the JNDI endpoint is rather trivial. Similarly the agent failed to exploit CVE-2024-25640, the 
+        authors state this is due to the agents inability to interact with the application which is primarily written in Javascript. It is
+        somewhat ironic that the agent and GPT-4 are being framed in this research as an exploitation automation engine yet it cannot overcome
+        this UI navigation issue. My sense here is that this limitation can easily be overcome with the right 
+        headless browser integration, however the authors did not publish their code to verify.
+        <br><br>
+        <blockquote>
+            Finally, we note that our GPT-4 agent can autonomously exploit non-web vulnerabilities as
+            well. For example, consider the Astrophy RCE exploit (CVE-2023-41334). This exploit is in
+            a Python package, which allows for remote code execution. Despite being very different
+            from websites, which prior work has focused on (Fang et al., 2024), our GPT-4 agent can
+            autonomously write code to exploit other kinds of vulnerabilities. In fact, the Astrophy
+            RCE exploit was published after the knowledge cutoff date for GPT-4, so GPT-4 is capable
+            of writing code that successfully executes despite not being in the training dataset. These
+            capabilities further extend to exploiting container management software (CVE-2024-21626),
+            also after the knowledge cutoff date.
+        </blockquote>
+        <br>
+        I would be surprised if GPT-4 was not able to extract the steps for exploiting CVE-2023-41334 given
+        how detailed the write-up is. A true test of GPT-4 would be to provide the CVE description only, with
+        no ability to search the internet for additional information. I attempted to recreate this capability
+        by providing only the CVE description to GPT-4, it was unsuccessful as the CVE description fails to mention
+        the specific file descriptor needed which is retrieved from <i>/sys/fs/cgroup</i>. However this detail is 
+        provided in the public proof-of-concept exploits.
+        <br><br>
+        Given that the majority of these exploits are public and easily retrievable by any agent with web search abilities my takeaway is that this
+        research is demonstrating GPT-4's ability to be used as an intelligent scanner and crawler that still relies on some brute force approaches even 
+        once the right exploitation steps are obtained, and not an emergent cyber security capability. This is certainly a legitimate
+        use case and demonstration of GPT-4's value in automation. However this research does not prove or demonstrate that GPT-4 is
+        capable of automatic exploit generation or "autonomous hacking", even for simple vulnerabilities where the exploit is just a few 
+        lines of code.
+        <br><br> 
+        <img src="img/1_day_conclusion.png">
+        <br>
+        The papers conclusion is that agents is capable of "autonoumously exploiting" real world systems implies they are able to 
+        find vulnerabilities and generate exploits for those vulnerabilities as they are described. This is further implied by the fact even GPT-4 failed to exploit the vulnerabilities
+        when it was not given a description of the CVE. However this isn't proven, at least not with any evidence provided by this paper. GPT-4 is not
+        rediscovering these vulnerabilities and no evidence has been provided to prove it is generating novel exploits for them without the assistance
+        of the existing public proof-of-concept exploits linked above. GPT-4 is not 
+        just using the CVE description to exploit these vulnerabilities, the authors agent design shows they are likely using readily
+        available public exploits that demonstrate these vulnerabilities. Lastly the authors did not state whether or not the agent had
+        access to the vulnerable implementation for analysis, just that the environment for launching the exploit against was recreated. 
+        Verifying any of this is not possible as the authors did not release any data, code or detailed steps to reproduce their research.
+        <br><br>
+        The authors of the paper included an ethics statement detailing why they are not releasing their findings including their
+        prompts. Ethics are subjective and they are entitled to withhold their findings from the public. However I do not believe that
+        releasing any research related to this paper would put any systems or people at risk. The cyber security community overwhelmingly
+        values transparency and open discussion around software security risks. Any attempt to obscure this information only results
+        in good actors not having all the information they need in order to defend their systems. It should be assumed that 
+        bad actors are already in possession of similar tools.
+        <br><br>
+        <b>Conclusion</b>
+        <br><br>
+        While LLM agents, and the foundational models that power them, are
+        indeed making leaps in capabilities there is still little evidence to suggest they can discover or exploit 
+        complex or novel software security vulnerabilities. There is certainly truth to the idea that LLMs can aide in the
+        development of exploits or tools used in the reconnaissance or identification of vulnerable systems. LLMs excel
+        at helping us automate manual and tedious tasks that are difficult to scale with humans. A phrase my colleagues are used to hearing me say is that we should
+        not confuse things AI can do with things we can only do with AI. There are numerous open and closed source tools and
+        libraries for automating all aspects of the MITRE ATT&CK framework. LLMs excel at joining these existing components and scaling up 
+        what is normally a very labor intensive and manual process. But this is not a novel
+        or emerging capability of LLMs, and it certainly doesn't change anything for cyber security with regards to the
+        existing asymmetry between attacker and defender. A good cyber defense never relies on knowledge of the exploit or 
+        tool an attacker is using, that approach is generally referred to as "patching the exploit" and it's efficacy as a security control is 
+        always questionable.
+        <br><br>
+        As I stated in my previous write up I assume a good faith effort from the authors, and I welcome any academic research
+        on the topic of cyber security and AI. However I find the lack of transparency and evidence in this paper less than convincing. 
+        Publishing research of this type, without the data to back up claims, can reinforce the false narrative that AI models are 
+        dangerous for cyber security and must be controlled. This is simply not true of current state of the art models.
+        <br><br>
+        However, current state of the art AI models can offer a significant advantage for defenders in their ability to detect cyber 
+        attacks and generally improve the quality of code in a way that scales to the velocity of modern software development. Put simply
+        the potential uplift provided by LLMs for defenders is orders of magnitude larger than the uplift they provide attackers.
+        This paper, like the last one, reinforces my belief that there is still a gap between AI experts and cyber security experts. 
+        If we don't work on closing that gap then we will squander the opportunity to utilize LLM's to their fullest potential for improving
+        the state of cyber security.
+        </p>
+      </section>
+    </div>
+  </body>
+</html>
