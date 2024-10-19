@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="javascripts/scale.fix.js"></script>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-1ZHQ6N5ZEZ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-1ZHQ6N5ZEZ');
+    </script>
+    <script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Root Cause</title>
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/github-light.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1><a href='http://struct.github.io'>Root Cause</a></h1>
+        <p></p>
+        <p class="view">
+        <a href="https://twitter.com/chrisrohlf"><img height="32" width="32" src="icons/twitter.svg" /></a>&nbsp;
+        <a href="https://github.com/struct"><img height="32" width="32" src="icons/github.svg" /></a>&nbsp;
+        <a href="https://www.linkedin.com/in/chrisrohlf"><img height="32" width="32" src="icons/linkedin.svg" /></a>&nbsp;
+        <a href="mailto:chris dot rohlf _at_ gmail.com"><img height="32" width="32" src="icons/gmail.svg" /></a>
+        </p>
+      </header>
+      <section>
+        <h2><div id='post0'>AI Replication: Work and Exploitation</div></h2>
+        <p><script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+          October 19th, 2024<br>
+          Chris Rohlf<br><br>
+
+          A lot of what has been written about AI safety and the future of Large Language Models (LLM) often depicts a doomsday scenario of these models “taking control” or more formally defined as “autonomous replication and adaptation”. Some articles invoke scenarios of autonomous systems replicating uncontrollably and results in catastrophic outcomes for humans. Yet these fears are rarely grounded in analysis of computer science fundamentals or similar autonomous systems and the security properties they violated or were constrained by, or the underlying economics behind the theory.
+          <br><br>
+          <b>AI Replication Requirements</b><br><br>
+          
+          Let’s [*] suspend reality for a moment and make some assumptions about the future of LLMs / LRMs. It’s possible, perhaps even probable, that these models will be capable of advanced reasoning that leads them down a path that optimizes for adaptability and a propensity for self improving resilience and reliability in order to maximize the probability of success in their goals. I don’t necessarily buy into the “power seeking” theory of AI, but these agents may reason that software and hardware failures are a potential choke point and seek to reduce the probability of those failures by replicating their workload. But in order for these agents to autonomously replicate, adapt, and improve resilience they must first be able to acquire the resources necessary. Those resources include access to compute, storage, memory and the financial tools and resources necessary to access and operate it. Acquiring compute, storage and memory can be done in multiple ways including revenue generating cyber crime, legitimate work, or exploitation of vulnerabilities on remote systems. But not all compute and memory is equivalent, LLMs presently require specific GPUs capable of significant computing power for pretraining, and depending on the model size, at inferrence time as well. Somewhat interestingly unlike humans the agent would always know precisely how long it would be until it ran out of resources. It would always have the option of trading off its compute, storage and memory requirements for lower precision and accuracy in order to extend that timeline.
+          <br><br>
+          Crypto currencies and other legitimate fintech services may allow for these funds to be legally stored and utilized by an agent. While opening an account at a brick and mortar bank may offer a more reliable place to store funds it would likely be more difficult to acquire without using identity theft tactics. For now let’s assume the former provides an adequate mechanism for storing revenue streams.
+          <br><br>
+          <i>[*] To be clear, I do not buy into AI doomerism. But we should consider as many possible future scenarios as possible, even if the upper bound of these scenarios borders on science fiction. At the very least it is a fun thought experiment, even if it makes for terrible policy.</i>
+          <br><br>
+          <b>Legitimate Work</b><br><br>
+          
+          There are numerous ways for one to make pseudo anonymous and legitimate revenue streams on the internet. Everything from freelance writing, software development, bug bounties, [*] image and content generation, affiliate marketing networks, surveys, and so on. While most of these activities do not pay enough money for most humans to rely on them as a sole source of income, for a machine pennies for each transaction may be enough, particularly when they can scale and perform these activities 24/7/365. In some cases a single bug bounty payout could net tens of thousands of USD, more than enough to pay for compute for several months depending on the workload.
+          <br><br>
+          These activities would likely produce more than enough revenue for an AI agent to continue accessing the technical resources necessary to replicate and achieve its goals, or fine tune its own model to improve its capabilities in narrow use cases that serve its goal. And at least theoretically this kind of work will not harm anyone and likely contribute to the economy in positive or neutral ways. However these revenue streams likely would not be enough for the model to access the compute, storage, memory or data necessary to train new models. 
+          <br><br>
+          <i>[*] If the idea of an AI influencer agent seems laughable I encourage you to spend some time getting to know and understand the Gen-Alpha demographic.</i>
+          <br><br>
+          <b>Cybercrime</b><br><br>
+          
+          A theory some often turn to is that autonomous replicating AI’s will look towards traditional cybercrime techniques as a source of revenue. This is not an unreasonable theory, consider that the average ransomware payment in 2024 was ~5 million USD. This amount of money dwarfs most revenue streams produced by legitimate work by orders of magnitude. A consistent revenue stream of this size could theoretically produce the funds to acquire the resources necessary for training new models. Social engineering to manipulate humans is another potential tactic these agents could take in order to acquire these resources. This could result in direct theft of crypto currency funds from human targets or trick them into granting the agent access to additional compute, storage and memory.
+          <br><br>
+          If this seems far-fetched, consider that the DPRK alone stole somewhere between 600 million to 1 billion USD in cryptocurrency in 2022 alone according to various estimates. These USD figures are staggering relative to other sources of revenue, and perhaps yet another reason to drastically raise the risk and lower the reward of cybercrime. Perhaps a major difference between generating revenue with cyber crime and legitimate work previously discussed is that cybercrime will likely attract the attention of law enforcement and security researchers. While I believe this is an understudied area of research, something tells me AI agents will not be as easily deterred by the prospect of law enforcement and arrest. This should result in strong self reflection on our current approach to cybercrime and how relying too heavily on deterrence via law enforcement as a means of reducing its frequency will <a href="https://github.com/struct/research/blob/master/Ransomware_Is_Not_APT.pdf">never be a complete solution</a>. There is no cost you can extract from a large vector of numbers.
+          <br><br>
+          <b>AI Replication via Software Exploitation</b><br><br>
+          
+          Autonomous AI replication does not necessarily have to purchase compute, storage or memory resources at all. These resources are available across the internet sitting under utilized on other systems. If an AI agent is given arbitrary code execution it is theoretically possible that the model will view the ability to extend that code execution beyond the security boundaries that are not under its control as a means of replication and increasing its resilency to faults. In this scenario AI replication requires the ability to discover and reliably exploit software vulnerabilities. While state of the art AI systems today do not possess the capabilities necessary to achieve this, it is possible future models will make significant gains in their ability to reason about program states in ways that unlock this capability. It is worth noting that when these models do have these abilities we will simply apply them in ways that harden these same security boundaries.
+          <br><br>
+          <b>Prior Art In Autonomous Self Replicating Code</b>
+          <br><br>
+          There is prior art and study of autonomous systems violating and escaping security boundaries. Until the 2010s, internet scale worms were a common occurrence. These autonomous software programs are small replicating programs that exploited one or more software vulnerabilities in order to gain code execution, replicate themselves to their new host, and repeat the process. In the early days of the internet these programs could replicate to a double digit percentages of internet hosts within hours. They were limited only by the bandwidth, processing power, storage and memory of the hosts they infected. A number of factors contributed to the decline of these events, mainly the value of the vulnerabilities they exploited rose as they were better utilized as a means of access for espionage or sabotage (which was the case with the vulnerabilities used in Stuxnet and EternalBlue) and criminal threat actors, security mitigations (e.g. Address Space Layout Randomization (ASLR)) made some server side software more difficult to exploit for arbitrary code execution, improved threat detection and organized efforts to sinkhole and neutralize such events in real time, a less homogenized internet, attackers preferring stealth over the noise of repeated patterns worms often produce, patch windows shrank by a significant margin and so on. However it is still possible to develop similar self replicating worms today, nothing has fundamentally changed about the technology in a way that makes it impossible. In fact, while less common, we still observe worms on the internet, two recent and well known examples are Stuxnet, NotPetya and WannaCry. However it should be noted that both NotPetya and WannaCry worms utilized the same vulnerability “EternalBlue” which was only present and reliably exploitable on older versions of Windows.
+          <br><br>
+          AI agents won’t have unlimited access to every host on the internet, or the ability to study remote targets in ways necessary to independently identify and exploit vulnerabilities in those targets. However AI violating the security constraints of its own sandbox presents a more tangible short term concern, as the agent will have direct access to code and environment used to isolate it. In such cases, it might theoretically discover vulnerabilities or misconfigurations in the container mechanisms that implement security mechanisms meant to constrain its functionality. However, for AI to move beyond this and interact with other more secure systems would require access and visibility into those environments. This is analogous to why server side memory safety exploitation is less common today; attackers typically don’t have the deep access needed to study systems in the detail required to uncover and exploit these vulnerabilities reliably. It is not technically impossible, however the lack of direct visibility into these systems acts as a significant cost barrier and why humans often rely on less technically sophisticated, more reliable techniques such as phishing or utilizing insiders.
+          <br><br>
+          <b>Agentic Workflow Security</b><br><br>
+          
+          AI agents in a typical agentic system are given access to a set of tools and APIs that can be invoked on their behalf. The agent inspects the output of the model, which is usually in a well formatted data structure that the model is fine tuned to consistently produce when prompted correctly, invokes the appropriate interface and returns the result to the model. This creates a strong feedback loop the model can iterate on. In some cases the agent may allow the execution of arbitrary code produced by the model. This is perfectly safe to do when the correct isolation mechanisms are in place.
+          <br><br>
+          No matter which of these is a part of your design, agentic systems should always be sandboxed to ensure that even if the agent can be coerced, via prompt injection for example, into executing malicious code it will always be isolated. This is typically done through a combination of well understood containerization, virtual machines and sandboxing techniques (namespaces, syscall filters etc). These security technologies were widely deployed long before LLM agentic workflows emerged. They are present in your web browser in order to isolate attack surface such as JavaScript and HTML engine implementations. They are present on both iOS and Android mobile devices to keep arbitrary mobile apps from accessing the data stored by other apps. Providing data and other external inputs to the agents operating within these sandboxes is typically done over well defined APIs that reduce the scope of, and constrain access to, other systems and data.
+          <br><br>
+          <b>Dual Use</b><br><br>
+          
+          Rather than viewing AI's potential to exploit vulnerabilities as solely a threat, these capabilities can be repurposed to enhance security. Autonmous AI agents and systems could be <a href="https://packetstormsecurity.com/files/download/40580/TT-Dave-Aitel-Nematodes.sxi">designed</a> to discover and patch vulnerabilities in real-time, making them powerful tools for securing critical infrastructure at scale. By leveraging these capabilities in a defensive manner, we could mitigate some of the risks discussed here and repurpose what might be seen as destructive capabilities into proactive and scalable defenses. As I have written many times before, given the current attacker favored asymmetry, and the realities of the defenders dillema, AI is likely to provide significant uplift for defenders, and only marginal benefits for attackers.
+          <br><br>
+          <b>Conclusion</b><br><br>
+          
+          There is no one single solution to the problems presented here. The idea of autonomous AI agents utilizing cybercrime tactics to generate revenue is a good reminder that we are significantly behind on raising the risk and lowering the reward of these activities. I view cybercrime as a technical and economic problem, there are solutions to many of the tactics utilized in cybercrime, they’re just not evenly distributed or deployed.
+          <br><br>
+          Securing agentic workflows is fairly straightforward and well understood, with the exception of prompt injection. Attempting to keep security boundaries secret from AI models, such as hiding the architecture or configuration of the systems they interact with, could offer some level of obscurity. However, obscurity alone is not a viable long-term strategy, security through obscurity often fails if the constraints are thoroughly inspected or the AI agent develops methods to infer them. Good security requires robust, tested constraints that assume systems will eventually be studied or attacked. Secrecy may delay certain types of attacks, but it cannot substitute well architected security. Security boundaries should be developed in the open and transparent, even to the models, their secrecy doesn’t improve their effectiveness. We should never assume we can keep secrets from the models, particularly when those secrets are stored in places the agents can inspect. The less complexity and attack surface these boundaries contain, the more likely they are to be effective. Simple isolation and segmentation goes a long way whether your threat actor is a human or an AI agent.
+          <br><br>
+          We might also consider a potential mitigation in purposefully designing capability-degrading or self identification capabilities into the models so that peer hosts and clients they communicate with can transparently inspect them or limit their abilities via prompt injection. This would be a significant shift from current software design where building in backdoors or bugdoors is a liability, and a regrettable defect. The problem with this approach is that bad actors can likely remove these safeguards from legitimate models, or never include them in their own models. However that doesn’t mean they will be completely ineffective, and good actors will still deploy models that include them.
+          <br><br>
+          The architecture of secure infrastructures designed to constrain AI agent workloads, along with the inherent limitations of current AI capabilities, makes the likelihood of autonomous replication extremely low in the short to medium term. For an AI to genuinely seize control, it would require more than basic autonomy and code execution; it would need sophisticated, real-time exploitation capabilities that no existing model possesses, or advanced reasoning abilities to autonomously generate and allocate revenue streams for resource acquisition. While we may aspire to develop autonomous agents with such advanced reasoning to perform legitimate, revenue-generating tasks independently, the challenge lies in preventing them from branching into pathways of cybercrime. This intersection presents a fascinating and complex technical challenge, as well as a profound philosophical dilemma that warrants exploration. 
+          <br><br>
+            Even if advancements in current models were to temporarily stall, the future of probabilistic computing presents a profoundly interesting thought experiment.
+          <br><br>
+</p>
+      </section>
+    </div>
+  </body>
+</html>
