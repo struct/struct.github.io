@@ -193,11 +193,11 @@ bool rpc_server::buffer_get_base(const rpc_msg_buffer_get_base_req & request, rp
         Note the <i>reinterpret_cast</i> operator which casts the raw buffer pointer to a <i>uint64_t</i> so 
         it can be sent to the client in the first call, and how the untrusted value sent by the client in 
         subsequent calls is cast back to a pointer and dereferenced. I fixed these issues in this <a href="https://github.com/ggml-org/llama.cpp/pull/14882">
-        pull request</a>. The fix swaps out the existing <i>unordered_map</i> for storing 
+        pull request</a>. The fix swaps out the existing <i>unordered_set</i> for storing 
         buffers in the <i>rpc_server</i> class for an <i>unordered_map&lt;uint64_t, ggml_backend_buffer_t&gt;</i>. This new 
-        data structures will store an opaque random ID as a handle the client can send in future commands that 
+        data structure will store an opaque random ID as a handle the client can send in future commands that 
         the server will use to lookup the corresponding backend buffer. This should be performant enough as both insertion and search
-        in <i>unordered_map</i> or O(1) in the average case. Unfortuantely there are many other ASLR leaks in the 
+        in <i>unordered_map</i> are O(1) in the average case. Unfortuantely there are many other ASLR leaks in the 
         implementation still to fix around tensor handling.
 <br><br>
         The second set of issues I ran into while fuzzing are the out-of-memory errors. Some commands, such as <i>RPC_CMD_INIT_TENSOR</i>
