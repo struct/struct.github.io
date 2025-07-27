@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="javascripts/scale.fix.js"></script>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-1ZHQ6N5ZEZ"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-1ZHQ6N5ZEZ');
+    </script>
+    <script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Root Cause</title>
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/github-light.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1><a href='http://struct.github.io'>Root Cause</a></h1>
+        <p></p>
+        <p class="view">
+        <a href="https://twitter.com/chrisrohlf"><img height="32" width="32" src="icons/twitter.svg" /></a>&nbsp;
+        <a href="https://github.com/struct"><img height="32" width="32" src="icons/github.svg" /></a>&nbsp;
+        <a href="https://www.linkedin.com/in/chrisrohlf"><img height="32" width="32" src="icons/linkedin.svg" /></a>&nbsp;
+        <a href="mailto:chris dot rohlf _at_ gmail.com"><img height="32" width="32" src="icons/gmail.svg" /></a>
+        </p>
+      </header>
+      <section>
+        <h2><div id='post0'>Securing GGML RPC Server</div></h2>
+        <p><script src="https://cdn.rawgit.com/google/code-prettify/master/loader/run_prettify.js"></script>
+          July 27th, 2025<br>
+          Chris Rohlf<br><br>
+
+          If you're not familiar with <a href="https://github.com/ggml-org/ggml/">GGML</a> it is the tensor processing library 
+          that powers inference in <a href="https://github.com/ggml-org/llama.cpp/">llama.cpp</a> and other open source projects. 
+          A tensor is a multi-dimensional array of numerical values that generalizes scalars (0 dimensions), vectors (1 dimension),
+          and matrices (2+ dimensions) to an arbitrary number dimensions (the GGML library supports up to 4). Some tensors are stored
+          on disk with the model weights (in GGUF format) and others are created on the fly as a result of tokenization and inference 
+          process. GGML stores all of these tensors in a Directed Acyclic Graph (DAG) that it compiles statically. Most nodes in the 
+          graph contain a GGML operation, for example <i>GGML_OP_MUL_MAT</i> for 'matrix multiplication'. These operations are executed 
+          across the graph using various backends (CPU, Apple Metal, CUDA etc) that it supports. Some nodes on this graph might use the
+          CPU backend while others are intended for a CUDA or Metal backend. The built-in GGML RPC server allows you to distribute this
+          work across multiple backends. All of this is configurable using llama-cli or other llama.cpp frontends.
+          <br><br>
+          The GGML maintainers are aware of, and have <a href="https://github.com/ggml-org/llama.cpp/pull/13061">documented</a>, the
+          lack of security on the RPC server. At the time of this writing security advisories are no longer created for vulnerabilities
+          in the server until there is higher confidence in the security of the implementation. As a side project I thought it might
+          be fun to explore the (in)security of the server and mitigate the issues I find.
+          <br><br>
+          I am not the first person to look at this code from a security perspective. Ruikai "Patrick" Peng 
+          <a href="https://retr0.blog/blog/llama-rpc-rce">published</a> a great writeup on his work exploiting a remotely reachable 
+          heap overflow in the implementation. There are other <a href="https://github.com/ggml-org/llama.cpp/security">advisories</a>
+          affecting the RPC server as well.
+
+          <br><br>
+          After reading the RPC server code I wondered if anyone was fuzzing the implementation. There are llama.cpp 
+          <a href="https://github.com/google/oss-fuzz/tree/master/projects/llamacpp/fuzzers">fuzzers</a> in the OSSFuzz repository
+          but none of them target the GGML RPC layer. After carefully reading the <a href="https://github.com/ggml-org/llama.cpp/blob/64bf1c3744053cf7def10aeed21ff48883ee755b/ggml/src/ggml-rpc/ggml-rpc.cpp#L1374">
+          <i>rpc_serve_client</i></a> function I realized that fuzzing this loop locally should be trivial. Fuzzing a 
+          server that is designed to take inputs from a network protocol can be tricky depending on the design. The GGML RPC main
+          server loop has a convienent function prototype that takes a socket descriptor and enters a <i>while</i> loop that
+          calls <i>send</i> and <i>recv</i> on that socket. This means with some minor modifications we should be able to 
+          call <i>socketpair</i> to generate a socket file descriptor for both ends of the connection, write to it, and then
+          pass the server end to <i>rpc_serve_client</i> where RPC commands will be processed.
+
+          <br><br>
+          The simplified fuzzing loop looks something like this (shortened for brevity and commented):
+          <br><br>
+          <pre class="prettyprint" lang-html="cpp" style="border: 0;">
+rpc_server_params params;
+ggml_backend_t backend;
+ggml_backend_reg_t reg;
+void (*start_server_fn)(ggml_backend_t backend, const char *cache_dir, sockfd_t sockfd, size_t free_mem, size_t total_mem);
+
+extern "C" int LLVMFuzzerInitialize(int *argc, char ***argv) {
+    // Load all GGML backends and create one for RPC
+    ggml_backend_load_all();
+    backend = create_backend(params);
+    reg = ggml_backend_reg_by_name("RPC");
+
+    // Get a function pointer to the main server loop
+    // We create this stub function separately in ggml-rpc.cpp
+    start_server_fn = (decltype(fuzz_rpc_serve_client)*) 
+        ggml_backend_reg_get_proc_address(reg, "fuzz_rpc_serve_client");
+
+    return 0;
+}
+
+extern "C" int LLVMFuzzerTestOneInput(const uint8_t *Data, size_t Size) {
+    int sv[2];
+
+    // Create the local socket pair using AF_UNIX
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+        return 0;
+    }
+
+    // Ensure the first command is HELLO command per the server implementation
+    uint64_t payload_len = 0;
+    const int RPC_CMD_HELLO = 14;
+
+    // Write the HELLO command and the fuzzed message according to the spec:
+    // RPC request : | rpc_cmd (1 byte) | request_size (8 bytes) | request_data (request_size bytes) |
+    // RPC response: | response_size (8 bytes) | response_data (response_size bytes) |
+    write(sv[1], &RPC_CMD_HELLO, 1);
+    write(sv[1], &payload_len, sizeof(payload_len));
+    write(sv[1], Data, Size);
+
+    // Call shutdown on the socket so that the last recv() sees EOF and doesn't block
+    shutdown(sv[1], SHUT_WR);
+
+    // Invoke the server loop and pass it one of the socket descriptors
+    try {
+        start_server_fn(backend, nullptr, sv[0], 0, 0);
+    } catch (...) {
+    }
+
+    // Close the socket pair
+    close(sv[0]);
+    close(sv[1]);
+
+    return 0;
+}
+  </pre>
+        Once the <i>rpc_serve_client</i> function enters the loop it will call <i>recv</i> and process the fuzzer produced data
+        as RPC commands until it reaches EOF. This all happens within the same process which allows libfuzzer to trace the code
+        branches and modify the inputs ensuring new code paths are discovered. The full commit including the fuzzer, and the 
+        CMake changes required to compile it can be found 
+        <a href="https://github.com/struct/llama.cpp/commit/4b77e08af513ad8ba74d861b3e29458a92efa4df">here</a>.
+        <br><br> 
+        For convenience I added it to the <i>rpc-server.cpp</i> tool file that ships with llama.cpp but it is only
+        conditionally compiled when <i>-DGGML_SANITIZE_FUZZER=ON</i> is passed to CMake. Compiling the fuzzer is simple if
+        your clang toolchain has libfuzzer support. On MacOS you can install a version of LLVM/clang that has support
+        using homebrew, and then run the following commands in the llama.cpp directory:
+        <br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+  $ cmake -B build/ -DCMAKE_BUILD_TYPE=Debug -DLLAMA_SANITIZE_ADDRESS=ON  \
+    -DGGML_SANITIZE_FUZZER=ON -DLLAMA_RPC=1 -DGGML_METAL=OFF              \
+    -DCMAKE_C_COMPILER=/opt/homebrew/Cellar/llvm/20.1.8/bin/clang         \
+    -DCMAKE_CXX_COMPILER=/opt/homebrew/Cellar/llvm/20.1.8/bin/clang++
+
+$ make -C build/ -j8
+
+$ build/bin/rpc-server -device cpu
+
+$ build/bin/llama-cli -m models/Meta-Llama-3.1-8B-Instruct-Q6_K.gguf --rpc localhost:50052 -n 64 -ngl 99
+</pre>
+<br>
+        You can modify the fuzzers <i>rpc_server_params</i> to enable or disable different GGML backends as needed 
+        as long as you have the underlying hardware. I have Metal disabled in the command above because fuzzing with it enabled
+        resulted in my Mac locking up and rebooting several times.
+        <br><br>
+        The problem with this fuzzer is that it will immediately crash on a number of different unexploitable
+        issues. The first set of them I encountered were NULL pointer dereferences stemming from calling
+        RPC functions out of order and generally not tracking client state. Some commands, such as <i>RPC_CMD_ALLOC_BUFFER</i>,
+        are used to allocate a backend buffer for later use in tensor deserialization. Those buffers are passed back
+        to the client in a response and are intended to be included on future requests such as those that include
+        an <i>rpc_tensor</i> field. If you don't include the correct buffer identifier then some commands such as
+        <i>RPC_CMD_SET_TENSOR, RPC_CMD_SET_TENSOR_HASH, RPC_CMD_GET_TENSOR,</i> and <i>RPC_CMD_COPY_TENSOR</i> will
+        crash on a NULL pointer dereference. I put up a pull request to fix these <a href="https://github.com/ggml-org/llama.cpp/pull/14868">
+        here</a>.
+        <br><br>
+        You may be wondering how these buffers are identified across client and server connections. Unfortunately
+        the answer is through operations such as this call to <i>alloc_buffer</i> via the <i>RPC_CMD_ALLOC_BUFFER</i> command:
+<br><br>
+        <pre class="prettyprint" lang-html="cpp" style="border: 0;">
+void rpc_server::alloc_buffer(const rpc_msg_alloc_buffer_req & request, rpc_msg_alloc_buffer_rsp & response) {
+  ...
+  response.remote_ptr = reinterpret_cast<uint64_t>(buffer);
+  ...
+}
+</pre>
+<br>
+And this call to <i>buffer_get_base</i> via the <i>RPC_CMD_BUFFER_GET_BASE</i> command:
+<br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+bool rpc_server::buffer_get_base(const rpc_msg_buffer_get_base_req & request, rpc_msg_buffer_get_base_rsp & response) {
+  ...
+  ggml_backend_buffer_t buffer = reinterpret_cast<ggml_backend_buffer_t>(request.remote_ptr);
+
+    if (buffers.find(buffer) == buffers.end()) {
+        GGML_LOG_ERROR("[%s] buffer not found\n", __func__);
+        return false;
+    }
+    void * base = ggml_backend_buffer_get_base(buffer);
+  ...
+}
+</pre>
+<br>
+        Note the <i>reinterpret_cast</i> operator which casts the raw buffer pointer to a <i>uint64_t</i> so 
+        it can be sent to the client in the first call, and how the untrusted value sent by the client in 
+        subsequent calls is cast back to a pointer and dereferenced. I fixed these issues in this <a href="https://github.com/ggml-org/llama.cpp/pull/14882">
+        pull request</a>. The fix swaps out the existing <i>unordered_map</i> for storing 
+        buffers in the <i>rpc_server</i> class for an <i>unordered_map&lt;uint64_t, ggml_backend_buffer_t&gt;</i>. This new 
+        data structures will store an opaque random ID as a handle the client can send in future commands that 
+        the server will use to lookup the corresponding backend buffer. This should be performant enough as both insertion and search
+        in <i>unordered_map</i> or O(1) in the average case. Unfortuantely there are many other ASLR leaks in the 
+        implementation still to fix around tensor handling.
+<br><br>
+        The second set of issues I ran into while fuzzing are the out-of-memory errors. Some commands, such as <i>RPC_CMD_INIT_TENSOR</i>
+        call a specific version of the <i>recv_msg</i> function designed to handle variable sized payloads. The function, shown below,
+        reads an untrusted <i>uint64_t</i> directly from the wire and uses it to resize the <i>input</i> vector.
+        <br><br>
+<pre class="prettyprint" lang-html="cpp" style="border: 0;">
+static bool recv_msg(sockfd_t sockfd, std::vector<uint8_t> & input) {
+    uint64_t size;
+    if (!recv_data(sockfd, &size, sizeof(size))) {
+        return false;
+    }
+    try {
+        input.resize(size);
+    } catch (const std::bad_alloc & e) {
+        fprintf(stderr, "Failed to allocate input buffer of size %" PRIu64 "\n", size);
+        return false;
+    }
+    return recv_data(sockfd, input.data(), size);
+}
+</pre>
+<br>
+        Passing any size near or above <i>INT32_MAX</i> is likely to cause the vector's constructor to throw an
+        exception. Some of these are easily patched by hardcoding an upper bound on the size. These constraints
+        likely won't work in production but should enable the fuzzer to reach deeper code paths.
+        <br><br>
+        There is a lot more work to be done to secure the GGML RPC implementation such as adding basic authentication,
+        fixing ASLR leaks, hardening the RPC state machine and more.
+</p>
+      </section>
+    </div>
+  </body>
+</html>
