@@ -55,6 +55,16 @@
           <a href="https://retr0.blog/blog/llama-rpc-rce">published</a> a great writeup on his work exploiting a remotely reachable 
           heap overflow in the implementation. There are other <a href="https://github.com/ggml-org/llama.cpp/security">advisories</a>
           affecting the RPC server as well.
+          <br><br>
+          The code doesn't use a standard RPC library like gRPC or Thrift, it instead uses packed C structures with the following
+          naming convention <i>rpc_msg_get_cmd_name_req</i> and <i>rpc_msg_get_alloc_cmd_name_rsp</i>. The majority of these
+          message types are simple integers fields with the exception of <i>rpc_tensor</i> which has a slightly more complex
+          structure. The protocol itself is rather simple on the wire, the first byte sent is always the command type, followed
+          by the message size, and then the message body. For fixed size commands there is validation of the size field matching
+          the size of the message type. For variable sized messages the size is trusted implicitly and usually used to resize 
+          a <i>std::vector</i> which will hold the data. RPC responses are very similar, a size followed by the response data if any.
+          Overall the serializing and deserializing of messages is simple, and so the implementation is mostly sane. It is the design
+          of the RPC server that is most insecure as it lacks authentication, sandboxing and other basic security controls.
 
           <br><br>
           After reading the RPC server code I wondered if anyone was fuzzing the implementation. There are llama.cpp 
@@ -197,8 +207,8 @@ bool rpc_server::buffer_get_base(const rpc_msg_buffer_get_base_req & request, rp
         buffers in the <i>rpc_server</i> class for an <i>unordered_map&lt;uint64_t, ggml_backend_buffer_t&gt;</i>. This new 
         data structure will store an opaque random ID as a handle the client can send in future commands that 
         the server will use to lookup the corresponding backend buffer. This should be performant enough as both insertion and search
-        in <i>unordered_map</i> are O(1) in the average case. Unfortuantely there are many other ASLR leaks in the 
-        implementation still to fix around tensor handling.
+        in <i>unordered_map</i> are O(1) in the average case. Unfortunately there are many other ASLR leaks in the 
+        implementation still to fix around <i>rpc_tensor</i> handling in the <i>data</i> and <i>view_src</i> fields.
 <br><br>
         The second set of issues I ran into while fuzzing are the out-of-memory errors. Some commands, such as <i>RPC_CMD_INIT_TENSOR</i>
         call a specific version of the <i>recv_msg</i> function designed to handle variable sized payloads. The function, shown below,
@@ -225,9 +235,9 @@ static bool recv_msg(sockfd_t sockfd, std::vector<uint8_t> & input) {
         likely won't work in production but should enable the fuzzer to reach deeper code paths.
         <br><br>
         There is a lot more work to be done to secure the GGML RPC implementation such as adding basic authentication,
-        fixing ASLR leaks, hardening the RPC state machine and more. I agree with the maintainers that this server 
-        should not be exposed on any public interface until substantial work is done to improve the code and harden
-        its design first.
+        fixing ASLR leaks, hardening the RPC state machine to handle more compelx message types and more. I agree 
+        with the maintainers that this server should not be exposed on any public interface until substantial work 
+        is done to improve the code and harden its design first.
 </p>
       </section>
     </div>
