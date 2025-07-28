@@ -217,7 +217,8 @@ bool rpc_server::buffer_get_base(const rpc_msg_buffer_get_base_req & request, rp
         in <code>unordered_map</code> are O(1) in the average case. Unfortunately there are many other ASLR leaks in the 
         implementation still to fix around <code>rpc_tensor</code> handling in the <code>data</code> and <code>view_src</code> fields.
 <br><br>
-        The second set of issues I ran into while fuzzing are the out-of-memory errors. Some commands, such as <code>RPC_CMD_INIT_TENSOR</code>
+        The second set of issues I ran into while fuzzing are the out-of-memory errors. As mentioned earlier, some variable sized command message types, 
+        such as <code>RPC_CMD_INIT_TENSOR</code>
         call a specific version of the <code>recv_msg</code> function designed to handle variable sized payloads. The function, shown below,
         reads an untrusted <code>uint64_t</code> directly from the wire and uses it to resize the <code>input</code> vector.
         <br><br>
