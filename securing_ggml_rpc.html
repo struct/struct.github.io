@@ -243,7 +243,7 @@ static bool recv_msg(sockfd_t sockfd, std::vector<uint8_t> & input) {
         likely won't work in production but should enable the fuzzer to reach deeper code paths.
         <br><br>
         There is a lot more work to be done to secure the GGML RPC implementation such as adding basic authentication,
-        fixing ASLR leaks, hardening the RPC state machine to handle more compelx message types and more. I agree 
+        fixing ASLR leaks, hardening the RPC state machine to handle more complex message types and more. I agree 
         with the maintainers that this server should not be exposed on any public interface until substantial work 
         is done to improve the code and harden its design first.
 </p>
